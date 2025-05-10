@@ -33,7 +33,8 @@ class SimCLRModel(pl.LightningModule):
 
     def init_weights_to_zero(self,m):
         if isinstance(m, (nn.Linear, nn.Conv2d)):
-            nn.init.constant_(m.weight, 0.0)
+            #nn.init.constant_(m.weight, 0.0)
+            nn.init.normal_(m.weight, mean=0.0, std=0.02)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0.0)
 

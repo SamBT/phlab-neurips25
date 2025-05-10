@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from models.networks import MLP
-from torch.utils.data import Dataset, DataLoader, TensorDataset, IterableDataset, ConcatDataset
+from torch.utils.data import Dataset, DataLoader, TensorDataset, IterableDataset, ConcatDataset, Sampler
 from torchvision.datasets import VisionDataset
 from torchvision.transforms import InterpolationMode
 import torchvision.transforms.v2 as v2
@@ -14,6 +14,7 @@ from utils.ANALYSISutils import plot_2distribution_new
 from scipy.stats import norm,chi2
 from scipy import interpolate
 import lmfit
+from collections import defaultdict
 
 class viewGenerator:
     """
@@ -74,6 +75,47 @@ class InterleavedIterableDataset(IterableDataset):
     def __len__(self):
         return len(self.base_dataset)
 
+class BalancedBatchSampler(Sampler):
+    def __init__(self, labels, batch_size, num_classes):
+        self.labels = labels
+        self.batch_size = batch_size
+        self.num_classes = num_classes
+        assert batch_size % num_classes == 0, "Batch size must be divisible by number of classes"
+        self.samples_per_class = batch_size // num_classes
+
+        # Group indices by class
+        self.class_indices = defaultdict(list)
+        tmplabel=torch.cat((labels[0],labels[1]))
+        print(tmplabel)
+        for idx, label in enumerate(tmplabel):
+            self.class_indices[label.item()].append(idx)
+
+        # Make sure each class has enough samples
+        for c in range(num_classes):
+            if len(self.class_indices[c]) < self.samples_per_class:
+                raise ValueError(f"Not enough samples for class {c}")
+
+        # Determine how many batches we can generate
+        self.num_batches = min(len(indices) // self.samples_per_class for indices in self.class_indices.values())
+
+    def __iter__(self):
+        class_indices_copy = {c: indices.copy() for c, indices in self.class_indices.items()}
+        for c in class_indices_copy:
+            np.random.shuffle(class_indices_copy[c])
+
+        for _ in range(self.num_batches):
+            batch = []
+            for c in range(self.num_classes):
+                selected = class_indices_copy[c][:self.samples_per_class]
+                class_indices_copy[c] = class_indices_copy[c][self.samples_per_class:]
+                batch.extend(selected)
+            np.random.shuffle(batch)
+            yield batch
+
+    def __len__(self):
+        return self.num_batches
+    
+    
 ### Stuff for pairwise product sum toy dataset ###
 def pairwise_product_sum(x,normalize=True):
     if len(x.size()) == 2:
@@ -674,8 +716,72 @@ def z_yield(data,labels,ref,ref_labels,iskip,iNb=1000,iNr=10000,iMin=0,iMax=300,
 #from GENutils import *
 #from ANALYSISutils import *
 
-def train_generic_datamc(inepochs,itrainloader,imodel,icriterion,ioptimizer,iCorrectData=False):
+def gaussian_kernel(x, y, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
+    n_samples = x.size(0) + y.size(0)
+    total = torch.cat([x, y], dim=0)
+    
+    L2_distance = ((total.unsqueeze(0) - total.unsqueeze(1)) ** 2).sum(2)
+    
+    if fix_sigma:
+        bandwidth = fix_sigma
+    else:
+        bandwidth = torch.sum(L2_distance.data) / (n_samples ** 2 - n_samples)
+    
+    bandwidth /= kernel_mul ** (kernel_num // 2)
+    bandwidth_list = [bandwidth * (kernel_mul ** i) for i in range(kernel_num)]
+    
+    kernel_val = [torch.exp(-L2_distance / bw) for bw in bandwidth_list]
+    return sum(kernel_val) / len(kernel_val)
+
+def mmd_loss(source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
+    batch_size = source.size(0)
+    kernels = gaussian_kernel(source, target, kernel_mul, kernel_num, fix_sigma)
+    
+    XX = kernels[:batch_size, :batch_size]
+    YY = kernels[batch_size:, batch_size:]
+    XY = kernels[:batch_size, batch_size:]
+    YX = kernels[batch_size:, :batch_size]
+    
+    loss = torch.mean(XX + YY - XY - YX)
+    return loss
+
+
+class RBF(nn.Module):
+
+    def __init__(self, n_kernels=5, mul_factor=2.0, bandwidth=None):
+        super().__init__()
+        self.bandwidth_multipliers = mul_factor ** (torch.arange(n_kernels) - n_kernels // 2)
+        self.bandwidth = bandwidth
+
+    def get_bandwidth(self, L2_distances):
+        if self.bandwidth is None:
+            n_samples = L2_distances.shape[0]
+            return L2_distances.data.sum() / (n_samples ** 2 - n_samples)
+
+        return self.bandwidth
+
+    def forward(self, X):
+        L2_distances = torch.cdist(X, X) ** 2
+        return torch.exp(-L2_distances[None, ...] / (self.get_bandwidth(L2_distances) * self.bandwidth_multipliers)[:, None, None]).sum(dim=0)
+
+
+class MMDLoss(nn.Module):
+
+    def __init__(self, kernel=RBF()):
+        super().__init__()
+        self.kernel = kernel
+
+    def forward(self, X, Y):
+        K = self.kernel(torch.vstack([X, Y]))
+        X_size = X.shape[0]
+        XX = K[:X_size, :X_size].mean()
+        XY = K[:X_size, X_size:].mean()
+        YY = K[X_size:, X_size:].mean()
+        return (XX - 2 * XY + YY)/(XX + YY + 1e-8)
+    
+def train_generic_datamc(inepochs,itrainloader,imodel,icriterion,ioptimizer,iCorrectData=False,iMMD=True):
     losses = []
+    mmdLoss = MMDLoss()
     for epoch in range(inepochs):#tqdm(range(inepochs)):
         imodel.train()
         epoch_loss = []
@@ -687,16 +793,31 @@ def train_generic_datamc(inepochs,itrainloader,imodel,icriterion,ioptimizer,iCor
             #features       = imodel(batch_data).unsqueeze(1)
             h              = imodel.encoder(batch_data)
             #preds          = imodel.classifier(h)
+            loss = 0
             if iCorrectData:
                 mc_mask        = (labelsd == 0)
-                data_mask      = (labelsd == 1)
+                #data_mask      = (labelsd == 1)
                 shifted        = imodel.shifter(h)
-                h[mc_mask]    += shifted[mc_mask]
+                #print(shifted[0:10],h[0:10])
+                mc_mask = mc_mask.reshape((labelsd.shape[0],1))*1.
+                h              =  h + shifted*mc_mask
             z              = imodel.projector(h)
-            z              = torch.nn.functional.normalize(z,dim=1).unsqueeze(1) # normalize the projection for simclr loss
+            #z              = torch.nn.functional.normalize(z,dim=1)
+            if iMMD:
+                h = torch.nn.functional.normalize(h,dim=1)
+                mc   = (h[labelsd == 0])
+                data = (h[labelsd == 1])
+                #print(len(h[labelsd == 0]),len(h[labelsd == 1]),"!!")
+                lMmdloss = mmdLoss(data,mc)*len(labels)#/(400**2)
+                #print(lMmdloss)
+                loss = loss + lMmdloss
             # Compute SimCLR loss
-            loss = icriterion(z,labels=labels)
-        
+            z              = torch.nn.functional.normalize(z,dim=1).unsqueeze(1) # normalize the projection for simclr loss
+            loss = loss + icriterion(z,labels=labels)
+            logits = imodel.classifier(h)
+            loss = loss + 0.5*torch.nn.functional.cross_entropy(logits, labels)
+            
+            
             # Backward pass and optimization
             ioptimizer.zero_grad()
             loss.backward()
