@@ -46,7 +46,7 @@ def main():
     parser.add_argument('--embed', dest='embed'   ,type=int,default=4)
     parser.add_argument('--ntrain', dest='ntrain', type=int,default=10000)
     parser.add_argument('--nbins',  dest='nbins',  type=int,default=21)
-    parser.add_argument('--ntoys',  dest='ntoys',  type=int,default=250)
+    parser.add_argument('--ntoys',  dest='ntoys',  type=int,default=1000)
     parser.add_argument('--nepochs', dest='nepochs',  type=int,default=15)
 
     args = parser.parse_args()

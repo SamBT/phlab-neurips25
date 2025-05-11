@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any, Callable, Optional, Tuple, Union
 
-from torchvision.datasets import VisionDataset, Imagenette
+from torchvision.datasets import VisionDataset#, Imagenette
 from torchvision.datasets.utils import verify_str_arg, download_and_extract_archive
 from torchvision.datasets.folder import find_classes, make_dataset
 

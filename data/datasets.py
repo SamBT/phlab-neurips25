@@ -6,9 +6,9 @@ import lightning as pl
 from . import data_utils as dutils
 from . import toy4vec as toy4vec
 from torchvision.transforms import v2
-from torchvision.datasets import Imagenette
+#from torchvision.datasets import Imagenette
 import numpy as np
-from torchvision.datasets import Imagenette, CIFAR10
+from torchvision.datasets import CIFAR10
 from torchvision.models import ResNet50_Weights, ResNet18_Weights
 from .customImagenette import TensorImagenette
 import glob
@@ -24,7 +24,7 @@ import matplotlib.lines as mlines
 
 
 class GenericDataModule(pl.LightningDataModule):
-    def __init__(self,batch_size=512,num_workers=4,pin_memory=False):
+    def __init__(self,batch_size=512,num_workers=2,pin_memory=False):
         super().__init__()
         self.batch_size = batch_size
         self.num_workers = num_workers
