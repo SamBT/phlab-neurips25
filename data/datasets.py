@@ -307,7 +307,7 @@ class FlatDataset(GenericDataModule):
             self.choice.append(np.random.choice(np.arange(self.nsigs),self.nsigs,replace=False))
         print("choice",self.choice)
         
-    def nvars_gaus(self,iD,iNSigs,iNTries=1000,iSigCut=3., iSigMax=5):
+    def nvars_gaus_old(self,iD,iNSigs,iNTries=1000,iSigCut=3., iSigMax=5):
         #print("Max:",pairwise_max(iD,[0,1,0.05],[0,1,0.95]))
         ntries=0
         maxes=[]
@@ -341,6 +341,48 @@ class FlatDataset(GenericDataModule):
             #self.choice.append(np.random.choice(np.arange(self.nsigs),self.nsigs,replace=False))
             self.choice.append(np.random.choice(np.arange(lMax),self.nsigs,replace=False))
         print("choice",self.choice)
+
+
+    def nvars_gaus(self,iD,iNSigs,iNTries=5000,iSigCut=3.5, iSigMax=7.):
+        #print("Max:",pairwise_max(iD,[0,1,0.05],[0,1,0.95]))
+        ntries=0
+        maxes=[]
+        for pVar in range(self.ndisc):
+            pId = pVar*iNSigs
+            for pSig in range(iNSigs):
+                if pVar == 0 and pSig < 2:
+                    continue
+                pPass  = False
+                ntries = 0
+                pMean = pSigma = 0
+                while pPass == False:
+                    pMean   = np.random.uniform(0.,1.)
+                    pSigma  = np.random.uniform(0.02,0.5)
+                    tMax = 2*iSigMax
+                    if pSig == 0:#refresh
+                        tMax = iSigMax-0.01
+                    for pVal in range(pId,len(self.mins)):
+                        testMax =  self.pairwise_max(iD,[pMean,pSigma],[self.mins[pVal],self.maxs[pVal]])
+                        #print("testMax:",testMax,"vals:",pMean,pSigma,"o:",self.mins[pVal],self.maxs[pVal])
+                        if  tMax > testMax:
+                            tMax = testMax
+                    if iSigMax > tMax > iSigCut or ntries > 999:
+                        pPass = True
+                        maxes.append(tMax)
+                    ntries += 1
+                if ntries < iNTries:
+                    self.mins.append(pMean)
+                    self.maxs.append(pSigma)
+                else:
+                    print("too many tries, reconfigure",ntries)
+        print("Maxes:",maxes)
+        print("Means:",self.mins,"\nSigmas:",self.maxs)
+        self.choice = []
+        for pVar in range(self.ndisc):
+            #self.choice.append(np.random.choice(np.arange(self.nsigs),self.nsigs,replace=False))
+            self.choice.append(pVar*iNSigs+np.random.choice(np.arange(iNSigs),self.nsigs,replace=False))
+        print("choice",self.choice)
+        
         
     #triangular distribution functions
     def triangular_pdf(self, x, a, b, c):
@@ -412,7 +454,7 @@ class FlatDataset(GenericDataModule):
         D = np.diag(np.sign(np.diag(R)))
         return Q @ D
 
-    def generate(self,n,iData=False,iMix=False):
+    def generate(self,n,iData=False,iMix=True):
         #Generate a clear signal and background using same variables
         #Add some random signals that use same discriminating variables
         #for now, we just do many different traingle distributions
@@ -478,7 +520,7 @@ class FlatDataset(GenericDataModule):
         cut_ds    = dutils.GenericDataset(cut_i, cut_l)
         return cut_ds
     
-    def train_datamcloader(self,imodel,cut_threshold=-1,iContamination=0): # No signal contamination in data
+    def train_datamcloader(self,imodel,cut_threshold=-1,iContamination=100): # No signal contamination in data
         cut_mc = self.prepcut(self.train_data[self.train_labels != self.skip], imodel,self.train_labels[self.train_labels != self.skip],cut_threshold=cut_threshold)
         cut_ds = self.prepcut(self.true_data [self.true_labels  != self.skip], imodel,                cut_threshold=cut_threshold)
         #cut_ds = self.prepcut(self.test_data [self.test_labels  != self.skip], imodel,                cut_threshold=cut_threshold)
