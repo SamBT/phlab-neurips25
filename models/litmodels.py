@@ -7,25 +7,30 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from io import BytesIO
 from PIL import Image
-from .losses import SupervisedSimCLRLoss
+from .losses import SupervisedSimCLRLoss,MMDLoss
 import sys
 from utils.plotting import make_corner
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 class SimCLRModel(pl.LightningModule):
-    def __init__(self, encoder, projector, temperature=0.1, sup_simclr=False,
-                 classifier=None, shifter=None, lambda_classifier=1.0, pretrain_ckpt=None, **kwargs):
+    def __init__(self, encoder, projector, temperature=0.1, sup_simclr=False, sup_simclr_datamc=False,
+                 classifier=None, shifter=None, lambda_classifier=1.0, lambda_MMD=0.01, MMD=False, pretrain_ckpt=None, **kwargs):
         super().__init__()
         self.encoder = encoder
         self.projector = projector
         self.simclr_criterion = SupervisedSimCLRLoss(temperature=temperature)
         self.sup_simclr = sup_simclr
+        self.sup_simclr_datamc = sup_simclr_datamc
         self.classifier = classifier
         self.shifter    = shifter
         self.lambda_classifier = lambda_classifier
         self.val_outputs = []
+        self.mmdLoss = MMDLoss()
+        self.MMD=MMD
+        self.lambda_MMD = lambda_MMD
         #print(self.encoder)
-        self.shifter.apply(self.init_weights_to_zero)
+        if self.shifter is not None:
+            self.shifter.apply(self.init_weights_to_zero)
 
         if pretrain_ckpt is not None:
             self.load_state_dict(torch.load(pretrain_ckpt)['state_dict'])
@@ -40,7 +45,7 @@ class SimCLRModel(pl.LightningModule):
 
         
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-2)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
         scheduler = CosineAnnealingLR(optimizer, T_max=10)
         return {
             "optimizer": optimizer,
@@ -72,6 +77,21 @@ class SimCLRModel(pl.LightningModule):
             loss_simclr = self.simclr_criterion(z, labels=labels)
             if validation:
                 self.val_outputs.append((loss_simclr.item(), h.cpu().numpy(), labels.cpu().numpy()))
+        elif self.sup_simclr_datamc:
+            batch_data,label_class = x
+            h = self.encoder(batch_data)
+            h = torch.nn.functional.normalize(h,dim=1)
+            z = self.projector(h)
+            z = F.normalize(z,dim=1).unsqueeze(1) # normalize the projection for simclr loss
+            #loss_simclr = self.simclr_criterion(z[labels == 0], labels=label_class[labels == 0])
+            loss_simclr = self.simclr_criterion(z, labels=label_class)
+            if self.MMD:
+                mc   = (h[labels == 0])
+                data = (h[labels == 1])
+                lMmdloss = self.mmdLoss(data,mc)#*len(labels)
+                loss_simclr = loss_simclr + lMmdloss*len(labels)*self.lambda_MMD
+            if validation:
+                self.val_outputs.append((loss_simclr.item(), h.cpu().numpy(), label_class.cpu().numpy()))            
         else:
             aug0, aug1 = x
             h0 = self.encoder(aug0)
@@ -84,10 +104,14 @@ class SimCLRModel(pl.LightningModule):
 
         # compute supervised classifier loss if using
         if self.classifier is not None:
-            if self.sup_simclr:
+            if self.sup_simclr or self.sup_simclr_datamc:
                 logits = self.classifier(h)
             else:
                 logits = self.classifier(h0)
+            if self.sup_simclr_datamc:
+                _, labelsd = x
+                logits = logits[labels == 0]
+                labels = labelsd[labels == 0]
             loss_classifier = F.cross_entropy(logits, labels)
             loss = loss_simclr + self.lambda_classifier * loss_classifier
         else:

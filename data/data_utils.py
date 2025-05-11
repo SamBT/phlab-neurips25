@@ -4,6 +4,7 @@ import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from models.networks import MLP
+from models.losses import SupervisedSimCLRLoss
 from torch.utils.data import Dataset, DataLoader, TensorDataset, IterableDataset, ConcatDataset, Sampler
 from torchvision.datasets import VisionDataset
 from torchvision.transforms import InterpolationMode
@@ -85,8 +86,11 @@ class BalancedBatchSampler(Sampler):
 
         # Group indices by class
         self.class_indices = defaultdict(list)
-        tmplabel=torch.cat((labels[0],labels[1]))
-        print(tmplabel)
+        if len(labels) < 3:
+            tmplabel=torch.cat((labels[0],labels[1]))
+        else:
+            tmplabel=labels
+        #print(tmplabel)
         for idx, label in enumerate(tmplabel):
             self.class_indices[label.item()].append(idx)
 
@@ -701,7 +705,7 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1
     #return z_as,z_emp
 
 def z_yield(data,labels,ref,ref_labels,iskip,iNb=1000,iNr=10000,iMin=0,iMax=300,iNbins=11,ntoys=1000,plot=True):
-    sig_yield = np.linspace(iMin,iMax,iNbins) + 10
+    sig_yield = np.linspace(iMin,iMax,iNbins) 
     z_as=[]; z_emp=[]
     for pYield in sig_yield: 
         pZ_as,pZ_emp = run_toy(pYield, iNb, iNr,data,labels,ref,ref_labels,iskip,ntoys=ntoys,plot=False)
@@ -712,7 +716,10 @@ def z_yield(data,labels,ref,ref_labels,iskip,iNb=1000,iNr=10000,iMin=0,iMax=300,
         plt.plot(sig_yield,z_as)
         plt.plot(sig_yield,z_emp)
         plt.show()
-    return sig_yield,np.max(np.vstack((z_as,z_emp)),axis=0)
+    z_emp = np.array(z_emp)
+    z_empmax=np.max(z_emp)
+    z_emp_out = np.where( z_emp == z_empmax, z_emp*5, z_emp)
+    return sig_yield,np.min(np.vstack((z_as,z_emp_out)),axis=0)
 #from GENutils import *
 #from ANALYSISutils import *
 
@@ -771,12 +778,16 @@ class MMDLoss(nn.Module):
         super().__init__()
         self.kernel = kernel
 
-    def forward(self, X, Y):
+    def forward(self, X, Y,iPrint=False):
         K = self.kernel(torch.vstack([X, Y]))
         X_size = X.shape[0]
         XX = K[:X_size, :X_size].mean()
         XY = K[:X_size, X_size:].mean()
         YY = K[X_size:, X_size:].mean()
+        if torch.isnan(XX + XY + YY):
+            return 0
+        if iPrint:
+            print("XX:",XX,"XY:",XY,"YY:",YY,"X:",X,"Y:",Y,)
         return (XX - 2 * XY + YY)/(XX + YY + 1e-8)
     
 def train_generic_datamc(inepochs,itrainloader,imodel,icriterion,ioptimizer,iCorrectData=False,iMMD=True):
@@ -816,6 +827,86 @@ def train_generic_datamc(inepochs,itrainloader,imodel,icriterion,ioptimizer,iCor
             loss = loss + icriterion(z,labels=labels)
             logits = imodel.classifier(h)
             loss = loss + 0.5*torch.nn.functional.cross_entropy(logits, labels)
+            
+            
+            # Backward pass and optimization
+            ioptimizer.zero_grad()
+            loss.backward()
+            ioptimizer.step()
+        
+            epoch_loss.append(loss.item())
+        mean_loss = np.mean(epoch_loss)
+        losses.append(mean_loss)
+        if epoch % 1 == 0:
+            print(f'Epoch [{epoch+1}/{inepochs}], Loss: {mean_loss:.4f}')
+    
+    plt.figure(figsize=(8,6))
+    plt.plot(np.arange(len(losses)),losses)
+
+def prepcut(idata,imodel,iLabel=None,cut_threshold=0.5):
+        with torch.no_grad():
+            i_out = (imodel(idata.float(),embed=True))
+            i_out=torch.nn.functional.softmax(imodel.classifier(i_out)).numpy()
+        i_maxval=np.max(i_out,1)
+        cut_i   = idata[i_maxval > cut_threshold]
+        if iLabel is not None:
+            cut_l = iLabel[i_maxval > cut_threshold]
+        else:
+            cut_l = torch.tensor(np.argmax(i_out,axis=1))[i_maxval > cut_threshold]
+        cut_ds    = GenericDataset(cut_i, cut_l)
+        return cut_ds
+    
+def train_generic_datamc_prep(inepochs,iTrain,iTrue,iTrainLabel,iModel,iMMD=True,batch_size=1000,cut_threshold=0,temp=0.5):
+        cut_mc = prepcut(iTrain, iModel,cut_threshold=cut_threshold,iLabel=iTrainLabel)
+        cut_ds = prepcut(iTrue,  iModel,cut_threshold=cut_threshold)
+        merger = ConcatWithLabels([cut_mc,cut_ds],[0,1])
+        labels = merger._labels
+        num_classes = 2
+        sampler  = BalancedBatchSampler(labels, batch_size, num_classes)
+        loader   = DataLoader(merger,batch_sampler=sampler,num_workers=11)
+        criterion = SupervisedSimCLRLoss(temperature=temp)
+        optimizer = torch.optim.AdamW(iModel.parameters(),lr=5e-4)
+        train_generic_datamc(inepochs,loader,iModel,criterion,optimizer,iCorrectData=False,iMMD=iMMD)
+        
+
+def train_generic_datamc_v2(inepochs,itrainloader,imodel,icriterion,ioptimizer,iNSig=3,iMMD=True):
+    losses = []
+    mmdLoss = MMDLoss()
+    for epoch in range(inepochs):#tqdm(range(inepochs)):
+        imodel.train()
+        epoch_loss = []
+        for tmp in itrainloader:
+            batch_data,labels = tmp
+            batch_data = batch_data.float()
+            
+            # Potential to add any augmentation here
+            #features       = imodel(batch_data).unsqueeze(1)
+            h              = imodel.encoder(batch_data)
+            #preds          = imodel.classifier(h)
+            loss = 0
+            if iCorrectData:
+                mc_mask        = (labels < 3)
+                #data_mask      = (labelsd == 1)
+                shifted        = imodel.shifter(h)
+                #print(shifted[0:10],h[0:10])
+                mc_mask = mc_mask.reshape((labels.shape[0],1))*1.
+                h              =  h + shifted*mc_mask
+            z              = imodel.projector(h)
+            #z              = torch.nn.functional.normalize(z,dim=1)
+            if iMMD:
+                h = torch.nn.functional.normalize(h,dim=1)
+                for pSig in range(iNSig):
+                    mc0   = (h[labels == pSig])
+                    data0 = (h[labels == (pSig+iNSig)])
+                    #print(pSig,mc0,data0)
+                    loss  = loss + (mmdLoss(mc0,data0))*len(labels)/iNSig
+                    if torch.isnan(loss):
+                        print("MMD:",(mmdLoss(data0,mc0,iPrint=True)),pSig)#,mc0,bmc,data0,bdata)
+            # Compute SimCLR loss
+            z              = torch.nn.functional.normalize(z,dim=1).unsqueeze(1) # normalize the projection for simclr loss
+            loss = loss + icriterion(z,labels=(labels % 3))
+            #logits = imodel.classifier(h)
+            #loss = loss + 0.5*torch.nn.functional.cross_entropy(logits, (labels % 3))
             
             
             # Backward pass and optimization

@@ -186,9 +186,10 @@ class ToyJetDataset(GenericDataModule):
         labels = torch.cat((torch.ones(len(sig)),torch.zeros(len(bkg))))
         return data,labels
     
-    def train_dataloader(self):
-        loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, 
+    def train_dataloader(self,cut_threshold):
+        loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
                             pin_memory=self.pin_memory, num_workers=self.num_workers)
+
         return loader
     
     def val_dataloader(self):
@@ -226,8 +227,8 @@ class FlatDataset(GenericDataModule):
         self.mins.append(0); self.maxs.append(1); self.peaks.append(1.-0.05)
         if not self.triangle:
             self.mins[1] = 1.
-            self.maxs[0] = 0.2
-            self.maxs[1] = 0.2
+            self.maxs[0] = 0.15
+            self.maxs[1] = 0.15
         #Do assignment
         if self.triangle:
             self.nvars(self.ndisc,self.nsigs)
@@ -250,8 +251,13 @@ class FlatDataset(GenericDataModule):
 
         self.true_data, self.true_labels = self.generate(self.num_test,True)
         self.true_dataset = TensorDataset(self.true_data, self.true_labels)
-        self.true_dataset_basic = dutils.GenericDataset(self.true_data, self.true_labels)
+        self.true_dataset_basic = dutils.GenericDataset(self.true_data[self.true_labels != self.skip], self.true_labels[self.true_labels != self.skip])
+        self.true_dataset_basic_full = dutils.GenericDataset(self.true_data, self.true_labels)
 
+        self.vtr_data, self.vtr_labels = self.generate(self.num_val,True)
+        self.vtr_dataset = dutils.AugmentationDataset(TensorDataset(self.vtr_data, self.vtr_labels),self.view_generator)
+        self.vtr_dataset_basic = dutils.GenericDataset(self.vtr_data[self.vtr_labels != self.skip], self.vtr_labels[self.vtr_labels != self.skip])
+        
         self.trut_data, self.trut_labels = self.generate(self.num_test,True)
         self.trut_dataset = TensorDataset(self.true_data, self.true_labels)
         self.trut_dataset_basic = dutils.GenericDataset(self.true_data, self.true_labels)
@@ -269,6 +275,7 @@ class FlatDataset(GenericDataModule):
     def nvars(self,iD,iNSigs,iNTries=1000,iSigCut=3., iSigMax=10):
         #print("Max:",pairwise_max(iD,[0,1,0.05],[0,1,0.95]))
         ntries=0
+        maxes=[]
         for pSig in range(2,iNSigs):
             pPass  = False
             ntries = 0
@@ -277,7 +284,7 @@ class FlatDataset(GenericDataModule):
                 pMin  = np.random.uniform(0,0.5)
                 pMax  = np.random.uniform(0.5,1.0)
                 pPeak = np.random.uniform(pMin,pMax)
-                tMax = 5
+                tMax = iSigMax
                 for pVal in range(len(self.mins)):
                     testMax =  self.pairwise_max(iD,[pMin,pMax,pPeak],[self.mins[pVal],self.maxs[pVal],self.peaks[pVal]])
                     if  tMax > testMax:
@@ -285,6 +292,7 @@ class FlatDataset(GenericDataModule):
             
                 if iSigMax > tMax > iSigCut or ntries > 999:
                     pPass = True
+                    maxes.append(tMax)
                 ntries += 1
             if ntries < 1000:
                 self.mins.append(pMin)
@@ -292,40 +300,46 @@ class FlatDataset(GenericDataModule):
                 self.peaks.append(pPeak)
             else:
                 print("too many tries, reconfigure",ntries)
+        print("Maxes:",maxes)
         print("Mins:",self.mins,"\nMaxs:",self.maxs,"\nPeaks:",self.peaks)
         self.choice = []
         for pVar in range(self.ndisc):
             self.choice.append(np.random.choice(np.arange(self.nsigs),self.nsigs,replace=False))
         print("choice",self.choice)
-
-    def nvars_gaus(self,iD,iNSigs,iNTries=1000,iSigCut=3., iSigMax=10):
+        
+    def nvars_gaus(self,iD,iNSigs,iNTries=1000,iSigCut=3., iSigMax=5):
         #print("Max:",pairwise_max(iD,[0,1,0.05],[0,1,0.95]))
         ntries=0
-        for pSig in range(2,iNSigs):
+        maxes=[]
+        lMax = int(iNSigs *2)
+        for pSig in range(2,lMax):#iNSigs):
             pPass  = False
             ntries = 0
             pMean = pSig = 0
             while pPass == False:
                 pMean   = np.random.uniform(0.,1.)
                 pSigma  = np.random.uniform(0.,0.5)
-                tMax = 5
+                tMax = iSigMax
                 for pVal in range(len(self.mins)):
                     testMax =  self.pairwise_max(iD,[pMean,pSigma],[self.mins[pVal],self.maxs[pVal]])
+                    #print("testMax:",testMax,"vals:",pMean,pSigma,"o:",self.mins[pVal],self.maxs[pVal])
                     if  tMax > testMax:
                         tMax = testMax
-            
                 if iSigMax > tMax > iSigCut or ntries > 999:
                     pPass = True
+                    maxes.append(tMax)
                 ntries += 1
             if ntries < 1000:
                 self.mins.append(pMean)
                 self.maxs.append(pSigma)
             else:
                 print("too many tries, reconfigure",ntries)
+        print("Maxes:",maxes)
         print("Means:",self.mins,"\nSigmas:",self.maxs)
         self.choice = []
         for pVar in range(self.ndisc):
-            self.choice.append(np.random.choice(np.arange(self.nsigs),self.nsigs,replace=False))
+            #self.choice.append(np.random.choice(np.arange(self.nsigs),self.nsigs,replace=False))
+            self.choice.append(np.random.choice(np.arange(lMax),self.nsigs,replace=False))
         print("choice",self.choice)
         
     #triangular distribution functions
@@ -376,7 +390,7 @@ class FlatDataset(GenericDataModule):
         if self.triangle:
             xrange=np.linspace(0,1,100)
         else:
-            xrange=np.linspace(-1,3,300)
+            xrange=np.linspace(0.,3*t1[1],300)
         if self.triangle:
             c_val = t1[2]
             ints1=self.triangular_int(c_val-xrange,c_val+xrange,t1[0],t1[1],t1[2])
@@ -386,7 +400,7 @@ class FlatDataset(GenericDataModule):
             ints1=self.gaus_int(c_val-xrange,c_val+xrange,t1[0],t1[1])
             ints2=self.gaus_int(c_val-xrange,c_val+xrange,t2[0],t2[1])
         vals=ints1[1:-1]*iNSig/np.sqrt(ints2[1:-1]*iNBkg+0.1)
-        maxval=(np.max(vals[(vals > 0) & (vals < 1e1)]))**iD
+        maxval=(np.max(vals[(vals > 0) & (vals < 1e1)]))#**iD
         #return vals**iD
         return maxval
     
@@ -438,12 +452,12 @@ class FlatDataset(GenericDataModule):
 
     def train_dataloader(self):
         loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, 
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+                            pin_memory=self.pin_memory, num_workers=self.num_workers,persistent_workers=True)
         return loader
     
     def val_dataloader(self):
-        loader = DataLoader(self.val_dataset_basic, batch_size=self.batch_size, shuffle=True,
-                            pin_memory=self.pin_memory, num_workers=self.num_workers)
+        loader = DataLoader(self.val_dataset_basic, batch_size=self.batch_size, shuffle=False,
+                            pin_memory=self.pin_memory, num_workers=self.num_workers,persistent_workers=True)
         return loader
     
     def test_dataloader(self):
@@ -451,17 +465,77 @@ class FlatDataset(GenericDataModule):
                             pin_memory=self.pin_memory, num_workers=self.num_workers)
         return loader
 
+    def prepcut(self,idata,imodel,iLabel=None,cut_threshold=0.5):
+        with torch.no_grad():
+            i_out = (imodel(idata.float(),embed=True))
+            i_out=torch.nn.functional.softmax(imodel.classifier(i_out)).numpy()
+        i_maxval=np.max(i_out,1)
+        cut_i   = idata[i_maxval > cut_threshold]
+        if iLabel is not None:
+            cut_l = iLabel[i_maxval > cut_threshold]
+        else:
+            cut_l = torch.tensor(np.argmax(i_out,axis=1))[i_maxval > cut_threshold]
+        cut_ds    = dutils.GenericDataset(cut_i, cut_l)
+        return cut_ds
+    
+    def train_datamcloader(self,imodel,cut_threshold=-1,iContamination=0): # No signal contamination in data
+        cut_mc = self.prepcut(self.train_data[self.train_labels != self.skip], imodel,self.train_labels[self.train_labels != self.skip],cut_threshold=cut_threshold)
+        cut_ds = self.prepcut(self.true_data [self.true_labels  != self.skip], imodel,                cut_threshold=cut_threshold)
+        #cut_ds = self.prepcut(self.test_data [self.test_labels  != self.skip], imodel,                cut_threshold=cut_threshold)
+        print("No contamin1")
+        if iContamination > 0:
+            tmp = self.true_data [self.true_labels  == self.skip][0:iContamination]
+            tmp_mrg = torch.cat((self.true_data [self.true_labels  != self.skip],tmp))
+            cut_ds =  self.prepcut(tmp_mrg, imodel,cut_threshold=cut_threshold)
+        
+        merger = dutils.ConcatWithLabels([cut_mc,cut_ds],[0,1])
+        labels = merger._labels
+        num_classes = 2
+        sampler  = dutils.BalancedBatchSampler(labels, self.batch_size, num_classes)
+        loader   = DataLoader(merger,batch_sampler=sampler,
+                              pin_memory=self.pin_memory,num_workers=self.num_workers,persistent_workers=True)
+        
+        return loader
+    
+    def val_datamcloader(self,imodel,cut_threshold=-1):
+        cut_mc = self.prepcut(self.val_data[self.val_labels != self.skip], imodel,self.val_labels[self.val_labels != self.skip],cut_threshold=cut_threshold)
+        cut_ds = self.prepcut(self.vtr_data[self.vtr_labels != self.skip], imodel,               cut_threshold=cut_threshold)
+
+        merger = dutils.ConcatWithLabels([cut_mc,cut_ds],[0,1])
+        labels = merger._labels
+        num_classes = 2
+        sampler  = dutils.BalancedBatchSampler(labels, self.batch_size, num_classes)
+        loader   = DataLoader(merger,batch_sampler=sampler,
+                              pin_memory=self.pin_memory,num_workers=self.num_workers,persistent_workers=True)
+
+        return loader
+    
+    def test_datamcloader(self,imodel,cut_threshold=-1,iContamination=0):
+        cut_mc = self.prepcut(self.test_data[self.test_labels != self.skip], imodel,self.train_labels[self.test_labels != self.skip],cut_threshold=cut_threshold)
+        cut_ds = self.prepcut(self.trut_data[self.trut_labels != self.skip], imodel,                  cut_threshold=cut_threshold)
+
+        merger = dutils.ConcatWithLabels([cut_mc,cut_ds],[0,1])
+        labels = merger._labels
+        num_classes = 2
+        sampler  = dutils.BalancedBatchSampler(labels, self.batch_size, num_classes)
+        loader   = DataLoader(merger,batch_sampler=sampler,
+                              pin_memory=self.pin_memory,num_workers=self.num_workers)
+
+        return loader
+    
     def plot(self):
         input_dim  = self.train_data.shape[1]
         fig, ax = plt.subplots(3, 3, figsize=(20, 20))
         for var in range(input_dim):
             if var > 8:
                 continue
-            _,bins,_=ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == self.skip].numpy(),density=True,alpha=0.5,label='skip')
-            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 0].numpy(),density=True,alpha=0.5,bins=bins,label='1')
-            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 1].numpy(),density=True,alpha=0.5,bins=bins,label='2')
-            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 2].numpy(),density=True,alpha=0.5,bins=bins,label='3')
+            bins=np.linspace(-0.5,1.5,20)
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 0].numpy(),density=True,alpha=0.5,bins=bins,label='0')
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 1].numpy(),density=True,alpha=0.5,bins=bins,label='1')
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 2].numpy(),density=True,alpha=0.5,bins=bins,label='2')
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 3].numpy(),density=True,alpha=0.5,bins=bins,label='skip')
             ax[var//3,var % 3].set_xlabel("var "+str(var))
+            ax[var//3,var % 3].set_xlim(-0.5,1.5)
             ax[var//3,var % 3].legend()
 
         #fig, ax = plt.subplots(3, 3, figsize=(20, 20))
@@ -518,29 +592,59 @@ class FlatDataset(GenericDataModule):
         input_dim  = self.train_data.shape[1]
         embedder   = MLP(input_dim=input_dim,hidden_dims=hidden_dims,output_dim=embed_dim,output_activation="sigmoid",dropout=0.1)#.to(device)
         projector  = MLP(input_dim=embed_dim,hidden_dims=[embed_dim],output_dim=embed_dim)
-        classifier = MLP(input_dim=embed_dim,hidden_dims=[16,16],output_dim=(self.nsigs-1))
-        shifter    = MLP(input_dim=embed_dim,hidden_dims=[32,32,16],output_dim=embed_dim,activation='relu')
+        classifier = MLP(input_dim=embed_dim,hidden_dims=[16,16],output_dim=(self.nsigs))
+        shifter    = None#MLP(input_dim=embed_dim,hidden_dims=[32,32,16],output_dim=embed_dim,activation='relu')
         self.model = SimCLRModel(embedder, projector,classifier=classifier,shifter=shifter,lambda_classifier=0.5,temperature=temp,sup_simclr=True)
         #optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.5e-3)
         # Dataloaders
-        trainloader = torch.utils.data.DataLoader(self.train_dataset_basic, batch_size=batch_size, shuffle=True)
+        trainloader = torch.utils.data.DataLoader(self.train_dataset_basic, batch_size=batch_size, shuffle=True,num_workers=self.num_workers,persistent_workers=True)
         #dutils.train_generic(num_epochs,trainloader,self.model,criterion,optimizer)
         trainer = pl.Trainer(max_epochs=num_epochs)
         trainer.fit(model=self.model, train_dataloaders=trainloader, val_dataloaders=self.val_dataloader());
         mc_lab =self.test_labels.int()
-        da_lab=self.true_labels.int()
+        da_lab=self.trut_labels.int()
         with torch.no_grad():
             output_train  = (self.model(self.train_data.float(),embed=True))
             mc_out  = (self.model(self.test_data.float(),embed=True))
-            da_out  = (self.model(self.true_data.float(),embed=True))
+            da_out  = (self.model(self.trut_data.float(),embed=True))
 
         if plot:
             self.cornerQuick(mc_out,da_out,mc_lab,da_lab)
             self.zscoreplot(mc_out,da_out,mc_lab,da_lab,self.test_data,self.true_data)
 
-        return self.model,output_train,da_out 
+        return self.model,output_train,da_out,mc_out,mc_lab,da_lab 
 
-        
+    def trainQuickDataMC(self,cut_threshold=-1,embed_dim=4,hidden_dims=[128,64,32,16],num_epochs=10,batch_size=1000,plot=True,temp=0.1,imodel=None,iMMD=False):
+        #now contrastive model
+        if imodel is None:
+            input_dim  = self.train_data.shape[1]
+            embedder   = MLP(input_dim=input_dim,hidden_dims=hidden_dims,output_dim=embed_dim,output_activation="sigmoid",dropout=0.1)#.to(device)
+            projector  = MLP(input_dim=embed_dim,hidden_dims=[embed_dim],output_dim=embed_dim)
+            classifier = MLP(input_dim=embed_dim,hidden_dims=[16,16],output_dim=(self.nsigs-1))
+            self.model = SimCLRModel(embedder, projector,classifier=classifier,shifter=None,lambda_classifier=0.5,temperature=temp,sup_simclr_datamc=True)
+        else:
+            imodel.sup_simclr_datamc=True
+            imodel.sup_simclr=False
+            imodel.MMD=iMMD
+            self.model = imodel
+        # Dataloaders
+        trainer = pl.Trainer(max_epochs=num_epochs)
+        trainer.fit(model=self.model, train_dataloaders=self.train_datamcloader(imodel=self.model,cut_threshold=cut_threshold), val_dataloaders=self.val_datamcloader(imodel=self.model,cut_threshold=cut_threshold));
+        mc_lab =self.test_labels.int()
+        da_lab=self.trut_labels.int()
+        with torch.no_grad():
+            output_train  = (self.model(self.train_data.float(),embed=True))
+            mc_out  = (self.model(self.test_data.float(),embed=True))
+            da_out  = (self.model(self.trut_data.float(),embed=True))
+
+        if plot:
+            self.cornerQuick(mc_out,da_out,mc_lab,da_lab)
+            self.zscoreplot(mc_out,da_out,mc_lab,da_lab,self.test_data,self.trut_data,intoys=100)
+
+        return self.model,output_train,da_out,mc_out,mc_lab,da_lab  
+
+
+    
 class NoisyImagenetteDataset(GenericDataModule):
     def __init__(self,image_width,eps=0.2,p=0.5,sup_simclr=False,**kwargs):
         super().__init__(**kwargs)
