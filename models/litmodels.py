@@ -29,12 +29,13 @@ class SimCLRModel(pl.LightningModule):
         self.MMD=MMD
         self.lambda_MMD = lambda_MMD
         #print(self.encoder)
-        if self.shifter is not None:
-            self.shifter.apply(self.init_weights_to_zero)
 
         if pretrain_ckpt is not None:
             self.load_state_dict(torch.load(pretrain_ckpt)['state_dict'])
         self.save_hyperparameters()
+        self.apply(self.init_weights)
+        if self.shifter is not None:
+            self.shifter.apply(self.init_weights_to_zero)
 
     def init_weights_to_zero(self,m):
         if isinstance(m, (nn.Linear, nn.Conv2d)):
@@ -43,7 +44,17 @@ class SimCLRModel(pl.LightningModule):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0.0)
 
-        
+
+    def init_weights(self,m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+            
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=5e-4)
         scheduler = CosineAnnealingLR(optimizer, T_max=10)

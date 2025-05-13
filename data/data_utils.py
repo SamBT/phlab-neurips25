@@ -723,11 +723,10 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1
     nrefs   = np.random.poisson(lam=nref, size=ntoys)
     nbrfs   = np.random.poisson(lam=nbkg, size=ntoys)
     for pToy in range(ntoys):
-        sigidx  = np.random.choice(ntotsig, size=nsigs[pToy], replace=False)
-        bkgidx  = np.random.choice(ntotbkg, size=nbkgs[pToy], replace=False)
-        refidx  = np.random.choice(ntotref, size=nrefs[pToy], replace=False)
-        brfidx  = np.random.choice(ntotref, size=nbkgs[pToy], replace=False) #note to be accurate thsi should be ref, but statisically correct is bkg (its just cheating)
-        #srfidx  = np.random.choice(ntotsref,size=nsigs[pToy], replace=False) #note to be accurate thsi should be ref, but statisically correct is bkg (its just cheating)
+        sigidx  = np.random.choice(ntotsig, size=nsigs[pToy], replace=True)
+        bkgidx  = np.random.choice(ntotbkg, size=nbkgs[pToy], replace=True)
+        refidx  = np.random.choice(ntotref, size=nrefs[pToy], replace=True)
+        brfidx  = np.random.choice(ntotref, size=nbkgs[pToy], replace=True) #note to be accurate thsi should be ref, but statisically correct is bkg (its just cheating)
         sig     = sigs[sigidx]
         bkg     = bkgs[bkgidx]
         ref     = refs[refidx]

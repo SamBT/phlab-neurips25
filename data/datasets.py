@@ -6,9 +6,9 @@ import lightning as pl
 from . import data_utils as dutils
 from . import toy4vec as toy4vec
 from torchvision.transforms import v2
-from torchvision.datasets import Imagenette
+#from torchvision.datasets import Imagenette
 import numpy as np
-from torchvision.datasets import Imagenette, CIFAR10
+from torchvision.datasets import CIFAR10
 from torchvision.models import ResNet50_Weights, ResNet18_Weights
 from .customImagenette import TensorImagenette
 import glob
@@ -24,7 +24,7 @@ import matplotlib.lines as mlines
 
 
 class GenericDataModule(pl.LightningDataModule):
-    def __init__(self,batch_size=512,num_workers=4,pin_memory=False):
+    def __init__(self,batch_size=512,num_workers=2,pin_memory=False):
         super().__init__()
         self.batch_size = batch_size
         self.num_workers = num_workers
@@ -628,7 +628,7 @@ class FlatDataset(GenericDataModule):
             plt.show()
 
 
-    def trainQuick(self,embed_dim=4,hidden_dims=[128,64,32,16],num_epochs=10,batch_size=1000,plot=True,temp=0.01):
+    def trainQuick(self,embed_dim=4,hidden_dims=[128,64,32,16],num_epochs=10,batch_size=1000,plot=True,temp=0.01,iFull=False):
         #now contrastive model
         #embed_dim  = 4 #not making it smaller than input space        input_dim  = self.train_data.shape[1]
         input_dim  = self.train_data.shape[1]
@@ -640,6 +640,8 @@ class FlatDataset(GenericDataModule):
         #optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.5e-3)
         # Dataloaders
         trainloader = torch.utils.data.DataLoader(self.train_dataset_basic, batch_size=batch_size, shuffle=True,num_workers=self.num_workers,persistent_workers=True)
+        if iFull:
+            trainloader = torch.utils.data.DataLoader(self.train_dataset_basic_full, batch_size=batch_size, shuffle=True,num_workers=self.num_workers,persistent_workers=True)
         #dutils.train_generic(num_epochs,trainloader,self.model,criterion,optimizer)
         trainer = pl.Trainer(max_epochs=num_epochs)
         trainer.fit(model=self.model, train_dataloaders=trainloader, val_dataloaders=self.val_dataloader());
