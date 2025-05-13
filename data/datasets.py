@@ -223,12 +223,12 @@ class FlatDataset(GenericDataModule):
         self.maxs =[]
         self.peaks=[]
         #Do Basic
-        self.mins.append(0); self.maxs.append(1); self.peaks.append(0.05)
-        self.mins.append(0); self.maxs.append(1); self.peaks.append(1.-0.05)
-        if not self.triangle:
-            self.mins[1] = 1.
-            self.maxs[0] = 0.15
-            self.maxs[1] = 0.15
+        #self.mins.append(0); self.maxs.append(1); self.peaks.append(0.05)
+        #self.mins.append(0); self.maxs.append(1); self.peaks.append(1.-0.05)
+        #if not self.triangle:
+        #    self.mins[1] = 1.
+        #    self.maxs[0] = 0.15
+        #    self.maxs[1] = 0.15
         #Do assignment
         if self.triangle:
             self.nvars(self.ndisc,self.nsigs)
@@ -350,8 +350,8 @@ class FlatDataset(GenericDataModule):
         for pVar in range(self.ndisc):
             pId = pVar*iNSigs
             for pSig in range(iNSigs):
-                if pVar == 0 and pSig < 2:
-                    continue
+                #if pVar == 0 and pSig < 2:
+                #    continue
                 pPass  = False
                 ntries = 0
                 pMean = pSigma = 0
@@ -628,7 +628,7 @@ class FlatDataset(GenericDataModule):
             plt.show()
 
 
-    def trainQuick(self,embed_dim=4,hidden_dims=[128,64,32,16],num_epochs=10,batch_size=1000,plot=True,temp=0.01):
+    def trainQuick(self,embed_dim=4,hidden_dims=[128,64,32,16],num_epochs=10,batch_size=1000,plot=True,temp=0.01,iFull=False):
         #now contrastive model
         #embed_dim  = 4 #not making it smaller than input space        input_dim  = self.train_data.shape[1]
         input_dim  = self.train_data.shape[1]
@@ -640,6 +640,8 @@ class FlatDataset(GenericDataModule):
         #optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.5e-3)
         # Dataloaders
         trainloader = torch.utils.data.DataLoader(self.train_dataset_basic, batch_size=batch_size, shuffle=True,num_workers=self.num_workers,persistent_workers=True)
+        if iFull:
+            trainloader = torch.utils.data.DataLoader(self.train_dataset_basic_full, batch_size=batch_size, shuffle=True,num_workers=self.num_workers,persistent_workers=True)
         #dutils.train_generic(num_epochs,trainloader,self.model,criterion,optimizer)
         trainer = pl.Trainer(max_epochs=num_epochs)
         trainer.fit(model=self.model, train_dataloaders=trainloader, val_dataloaders=self.val_dataloader());
