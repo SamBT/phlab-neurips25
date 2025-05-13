@@ -57,7 +57,7 @@ class DeepSetsEncoder(nn.Module):
         return self.f(x)
     
 class CustomResNet(nn.Module):
-    def __init__(self,variant,fc_hidden,fc_out,freeze=True,**kwargs):
+    def __init__(self,variant,fc_hidden,fc_out,freeze:bool=True,**kwargs):
         # loads resnet then replaces the last fc layer with a user-specificed mlp
         # fc_dims specifies the dimensions 
         super().__init__()

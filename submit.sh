@@ -12,4 +12,4 @@
 source ~/.bash_profile
 mamba activate torch_gpu
 cd /n/home11/sambt/phlab-neurips25
-python cli.py fit --config $1
+python cli.py fit "$@"

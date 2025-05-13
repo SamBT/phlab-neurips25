@@ -1,0 +1,58 @@
+trainer:
+  accelerator: auto
+  default_root_dir: runs/cifar10_simCLR_ResNet50_T0.5/
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: val/loss
+        mode: min
+        save_last: true
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: val/loss
+        patience: 5
+        mode: min
+  logger:
+    class_path: lightning.pytorch.loggers.WandbLogger
+  log_every_n_steps: 1
+  max_epochs: 20
+
+data:
+  class_path: data.datasets.CIFAR10Dataset
+  init_args:
+    resnet_type: 'resnet50'
+    batch_size: 512
+    num_workers: 2
+    exclude_classes: [9]
+
+optimizer:
+  class_path: torch.optim.AdamW
+  init_args:
+    lr: 1e-3
+
+lr_scheduler:
+  class_path: torch.optim.lr_scheduler.CosineAnnealingLR
+  init_args:
+    T_max: 20
+    eta_min: 5e-5
+
+model:
+  class_path: models.litmodels.SimCLRModel
+  init_args:
+    encoder:
+      class_path: models.networks.CustomResNet
+      init_args:
+        variant: resnet50
+        fc_hidden: [512,256,128]
+        fc_out: 4
+        freeze: false # do not freeze the backbone
+    projector:
+      class_path: models.networks.MLP
+      init_args:
+        input_dim: 4
+        hidden_dims: [4]
+        output_dim: 4
+    classifier: null
+    lambda_classifier: 0.5
+    temperature: 0.05
+    sup_simclr: true

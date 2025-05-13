@@ -58,7 +58,6 @@ model:
         input_dim: 4
         hidden_dims: [16,16]
         output_dim: 9
-    #classifier: null
     lambda_classifier: 0.5
     temperature: 0.5
     sup_simclr: true

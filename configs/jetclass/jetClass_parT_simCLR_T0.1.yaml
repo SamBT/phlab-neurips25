@@ -24,7 +24,7 @@ data:
   init_args:
     classes: [qcd,ttbar,wqq,zqq]
     input_config: configs/jetclass_data_configs/JetClass_full.yaml
-    batch_size: 1024
+    batch_size: 512
     num_workers: 1
 
 optimizer:
@@ -36,7 +36,7 @@ lr_scheduler:
   class_path: torch.optim.lr_scheduler.CosineAnnealingLR
   init_args:
     T_max: 100
-    eta_min: 1e-6
+    eta_min: 1e-5
 
 model:
   class_path: models.litmodels.JetClassSimCLRModel

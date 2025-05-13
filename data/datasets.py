@@ -416,7 +416,7 @@ class TensorImagenetteDataset(GenericDataModule):
         return loader
     
 class JetClassDataset(GenericDataModule):
-    def __init__(self,classes,input_config,
+    def __init__(self,classes,input_config,limit_test_files=None,
                  **kwargs):
         super().__init__(**kwargs)
         self.train_dir = "/n/holystore01/LABS/iaifi_lab/Lab/sambt/JetClass/train_100M/"
@@ -439,6 +439,9 @@ class JetClassDataset(GenericDataModule):
         self.train_file_dict = {c:glob.glob(f"{self.train_dir}/{self.all_class_fileHeaders[c]}_*.root") for c in self.classes}
         self.val_file_dict = {c:glob.glob(f"{self.val_dir}/{self.all_class_fileHeaders[c]}_*.root") for c in self.classes}
         self.test_file_dict = {c:glob.glob(f"{self.test_dir}/{self.all_class_fileHeaders[c]}_*.root") for c in self.classes}
+        if limit_test_files is not None:
+            for c in self.classes:
+                self.test_file_dict[c] = self.test_file_dict[c][:limit_test_files]
 
     def train_dataloader(self):
         train_dataset = SimpleIterDataset(
@@ -499,7 +502,7 @@ class JetClassDataset(GenericDataModule):
     
 class CIFAR10Dataset(GenericDataModule):
     def __init__(self,resnet_type,grayscale=False,custom_pre_transforms=None,custom_post_transforms=None,
-                 exclude_classes=[],**kwargs):
+                 exclude_classes:list[int]=[],for_training=False,**kwargs):
         super().__init__(**kwargs)
         self.transform = dutils.ResNet50Transform(resnet_type=resnet_type,grayscale=grayscale,from_pil=True,
                                                   custom_pre_transforms=custom_pre_transforms,
@@ -518,17 +521,35 @@ class CIFAR10Dataset(GenericDataModule):
                                     download=False,
                                     transform=self.transform)
         if len(exclude_classes) > 0:
+            print("EXCLUDING CLASSES:",exclude_classes)
             train_mask = np.array([lab not in exclude_classes for lab in self.train_dataset.targets])
             val_mask = np.array([lab not in exclude_classes for lab in self.val_dataset.targets])
             test_mask = np.array([lab not in exclude_classes for lab in self.test_dataset.targets])
+
+            all_classes = sorted(list(set(self.train_dataset.targets)))
+            remaining_classes = [lab for lab in all_classes if lab not in exclude_classes]
+            remaining_class_labels = np.arange(len(remaining_classes))
+            class_map = {c:new for c,new in zip(remaining_classes,remaining_class_labels)}
+            def label_changer(x):
+                return class_map[x]
+            vfunc = np.vectorize(label_changer)
             
-            self.train_dataset.targets = list(np.array(self.train_dataset.targets)[train_mask])
+            self.train_dataset.targets = np.array(self.train_dataset.targets)[train_mask]
+            if for_training:
+                self.train_dataset.targets = vfunc(self.train_dataset.targets)
+            self.train_dataset.targets = list(self.train_dataset.targets)
             self.train_dataset.data = self.train_dataset.data[train_mask]
 
-            self.val_dataset.targets = list(np.array(self.val_dataset.targets)[val_mask])
+            self.val_dataset.targets = np.array(self.val_dataset.targets)[val_mask]
+            if for_training:
+                self.val_dataset.targets = vfunc(self.val_dataset.targets)
+            self.val_dataset.targets = list(self.val_dataset.targets)
             self.val_dataset.data = self.val_dataset.data[val_mask]
 
-            self.test_dataset.targets = list(np.array(self.test_dataset.targets)[test_mask])
+            self.test_dataset.targets = np.array(self.test_dataset.targets)[test_mask]
+            if for_training:
+                self.test_dataset.targets = vfunc(self.test_dataset.targets)
+            self.test_dataset.targets = list(self.test_dataset.targets)
             self.test_dataset.data = self.test_dataset.data[test_mask]
 
     def train_dataloader(self):

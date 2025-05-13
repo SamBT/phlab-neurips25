@@ -10,6 +10,7 @@ class CIFAR5MDataset(Dataset):
     def __init__(self,resnet_type,chunks,ranges,grayscale=False,custom_pre_transforms=None,custom_post_transforms=None,
                  data_dir="/n/holystore01/LABS/iaifi_lab/Lab/sambt/neurips25/cifar10_diffusion/",
                  exclude_classes=[],
+                 for_training=False,
                  **kwargs):
         super().__init__(**kwargs)
         assert len(chunks) == len(ranges)
@@ -30,9 +31,20 @@ class CIFAR5MDataset(Dataset):
         self.data = torch.cat(self.data)
         self.labels = np.concatenate(self.labels)
         if len(exclude_classes) > 0:
+            if for_training:
+                all_classes = sorted(list(set(self.labels)))
+                remaining_classes = [lab for lab in all_classes if lab not in exclude_classes]
+                reamining_class_labels = np.arange(len(remaining_classes))
+                class_map = {c:new for c,new in zip(remaining_classes,reamining_class_labels)}
+                def label_changer(x):
+                    return class_map[x]
+                vfunc = np.vectorize(label_changer)
+
             mask = np.isin(self.labels, exclude_classes, invert=True)
             self.data = self.data[mask]
             self.labels = self.labels[mask]
+            if for_training:
+                self.labels = vfunc(self.labels)
         
     def __len__(self):
         return len(self.data)
