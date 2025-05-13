@@ -12,7 +12,8 @@ import torchvision.transforms.v2 as v2
 import numpy as np
 from utils.MAHALANOBISutils import compute_empirical_means,compute_empirical_cov_matrix,mahalanobis_test
 from utils.ANALYSISutils import plot_2distribution_new
-from scipy.stats import norm,chi2
+#import utils.NPLMutils as nplm
+from scipy.stats import norm,chi2,kstest
 from scipy import interpolate
 import lmfit
 from collections import defaultdict
@@ -118,7 +119,57 @@ class BalancedBatchSampler(Sampler):
 
     def __len__(self):
         return self.num_batches
+
+def maxlikelihood(iData, iRef, iRefLabel, sig_idx, iNSig, iNBkg, iNBins=100):
+    data_sort  = np.sort(iData.flatten().numpy())
+    ntot   = len(data_sort)
+    width  = int(ntot/iNBins)
+    binsRange=[]
+    binsRange.append(1.1)
+    pVal=data_sort[-1]
+    for pBin in range(iNBins-1):
+        #pBinHigh = np.where(pBin == 0, 1.1, data_sort[-(iter)*pBin]
+        pBinLow =  data_sort[-(width)*(pBin+1)]
+        if pVal == pBinLow:
+            continue
+        binsRange.append(pBinLow)
+        pVal=pBinLow
+    binsRange.append(-1)
+    bins=np.sort(np.array(binsRange))
+    data,bin_edges = np.histogram(iData,bins=bins)
+    s,_  = np.histogram(iRef[iRefLabel == sig_idx],bins=bins)
+    b,_  = np.histogram(iRef[iRefLabel != sig_idx],bins=bins)
+    #log likelihood -(x-mu)^2/sigma^2 - log(2pisigma^2)/2 => Delta s^2/sigma^2  => s^2/B
+    bscale=iNBkg/np.sum(b)
+    sscale=iNSig/np.sum(s)
+    expsig=(s*sscale)**2/(b*bscale)
+    realsig=((data-bscale*b))**2/(bscale*b)
+    sigarr=[]
+    expsigarr=[]
+    for pBin in range(len(b)):
+        ptotsig = np.sum(realsig[-pBin-1:])
+        pexpsig = np.sum(expsig [-pBin-1:])
+        if ptotsig > 0:
+            pval=chi2.cdf(ptotsig, pBin+1)
+            ptotsig =   norm.ppf(pval)
+        if pexpsig > 0:
+            pcen=chi2.ppf(0.5,pBin+1)
+            pval=chi2.cdf(pexpsig+pcen, pBin+1)
+            print(":",pexpsig)
+            pexpsig =   norm.ppf(pval)
+            print(pexpsig,pcen,"!",pval)
+        sigarr.append(ptotsig)
+        expsigarr.append(pexpsig)
+    print("sigarr",sigarr,"exp",expsigarr)
+    print("val",np.max(sigarr),np.max(expsigarr), sigarr[np.argmax(expsigarr)])
+    a
+    return sigarr[np.argmax(expsigarr)]
+    #low stats version
+    #sig=np.sqrt(2 * ((s + b) * np.log(1 + s / b) - s))
     
+def ksscore(iData, iRef, iRefLabel, sig_idx):
+    ks=kstest(iData.flatten().numpy(), iRef[iRefLabel != sig_idx].flatten().numpy())
+    return -1.*norm.ppf(ks.pvalue)
     
 ### Stuff for pairwise product sum toy dataset ###
 def pairwise_product_sum(x,normalize=True):
@@ -339,7 +390,7 @@ def train_disc(inepochs,itrain,input_dim,last_dim=16,output_dim=3):
             features = disc_model(batch_data)
             if output_dim == 1:
                 features=features.squeeze(1)
-                loss = disc_criterion(features,labels)
+                loss = disc_criterion(features,labels.float())
             else:
                 loss = disc_criterion(features,labels.long())
             disc_optimizer.zero_grad()
@@ -653,18 +704,20 @@ def zemp(t1,t2,iPrint=False):
         print("zemp",Z_empirical,"+",Z_empirical_p,"-",Z_empirical_m,t_empirical,t_empirical_err)
     return Z_empirical
     
-def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1000,plot=True):
+def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1000,plot=True,iOption=0):
     t_sig = []
     t_ref = []
     refs      = model       [model_labels != sig_idx]
     refs_label= model_labels[model_labels != sig_idx]
+    srefs    = model       [model_labels == sig_idx]
     sigs     = data[labels == sig_idx]
     bkgs     = data[labels != sig_idx]
 
     ntotsig = len(sigs)
     ntotbkg = len(bkgs)
     ntotref = len(refs)
-    
+    #ntotsrefs = len(srefs)
+    z_emp=0
     nsigs   = np.random.poisson(lam=nsig, size=ntoys)
     nbkgs   = np.random.poisson(lam=nbkg, size=ntoys)
     nrefs   = np.random.poisson(lam=nref, size=ntoys)
@@ -674,41 +727,64 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1
         bkgidx  = np.random.choice(ntotbkg, size=nbkgs[pToy], replace=False)
         refidx  = np.random.choice(ntotref, size=nrefs[pToy], replace=False)
         brfidx  = np.random.choice(ntotref, size=nbkgs[pToy], replace=False) #note to be accurate thsi should be ref, but statisically correct is bkg (its just cheating)
+        #srfidx  = np.random.choice(ntotsref,size=nsigs[pToy], replace=False) #note to be accurate thsi should be ref, but statisically correct is bkg (its just cheating)
         sig     = sigs[sigidx]
         bkg     = bkgs[bkgidx]
         ref     = refs[refidx]
         #brf     = bkgs[brfidx] # in the long run we change this to ref
         brf     = refs[brfidx] # in the long run we change this to ref
         ref_label=refs_label[refidx]
+        #srf     = srfs[srfidx]
+        #srf_label=torch.ones(srf.shape)*sig_idx
         #for pMetric in metrics: #just one for now, otherwise t_sig/t_ref have to be fixed
-        dist,_    = mahalanobis_dist(torch.cat((sig,bkg)),ref,ref_label,plot=False,fit=False)
-        ref_dist,_= mahalanobis_dist(brf,ref,ref_label,plot=False,fit=False)
+        if iOption == 0:
+            dist,_    = mahalanobis_dist(torch.cat((sig,bkg)),ref,ref_label,plot=False,fit=False)
+            ref_dist,_= mahalanobis_dist(brf,ref,ref_label,plot=False,fit=False)
+        else:
+            #totref=torch.cat((ref,srf))
+            #totrefl=torch.cat((ref_label,srf_label))
+            #dist     = maxlikelihood(torch.cat((sig,bkg)),model,model_labels,sig_idx,nsig,nbkg)
+            dist     = ksscore(torch.cat((sig,bkg)),ref,ref_label,sig_idx)
+            ref_dist = ksscore(brf,ref,ref_label,sig_idx)
         t_sig.append(dist)
         t_ref.append(ref_dist)
-
-    ts, tr = np.array(t_sig), np.array(t_ref)
-    if plot:
-        bins=np.linspace(np.min(tr)*0.8,np.max(tr)*1.2,20)
-        x   = 0.5*(bins[1:]+bins[:-1])
-        trvals,_ = np.histogram(tr,bins=bins)
-        tsvals,_ = np.histogram(ts,bins=bins)
-        plt.errorbar(x,tsvals/np.sum(tsvals),yerr=np.sqrt(tsvals)/np.sum(tsvals),alpha=0.5,marker='.',drawstyle='steps-mid',label="Sig+bkg")
-        plt.errorbar(x,trvals/np.sum(trvals),yerr=np.sqrt(trvals)/np.sum(trvals),alpha=0.5,marker='.',drawstyle='steps-mid',label="bkg")
-        plt.xlabel("t")
-        plt.show()
-    z_as=zscore(ts,tr,plot)
-    z_emp=zemp(ts,tr,plot)
+        ts, tr = np.array(t_sig), np.array(t_ref)
+    if iOption == 0:
+        if plot:
+            bins=np.linspace(np.min(tr)*0.8,np.max(tr)*1.2,20)
+            x   = 0.5*(bins[1:]+bins[:-1])
+            trvals,_ = np.histogram(tr,bins=bins)
+            tsvals,_ = np.histogram(ts,bins=bins)
+            plt.errorbar(x,tsvals/np.sum(tsvals),yerr=np.sqrt(tsvals)/np.sum(tsvals),alpha=0.5,marker='.',drawstyle='steps-mid',label="Sig+bkg")
+            plt.errorbar(x,trvals/np.sum(trvals),yerr=np.sqrt(trvals)/np.sum(trvals),alpha=0.5,marker='.',drawstyle='steps-mid',label="bkg")
+            plt.xlabel("t")
+            plt.show()
+        z_as=zscore(ts,tr,plot)
+        z_emp=zemp(ts,tr,plot)
+    else:
+        if plot:
+            bins=np.linspace(np.max(ts)*(-2.2),np.max(ts)*2.2,20)
+            x   = 0.5*(bins[1:]+bins[:-1])
+            trvals,_ = np.histogram(tr,bins=bins)
+            tsvals,_ = np.histogram(ts,bins=bins)
+            plt.errorbar(x,tsvals,yerr=np.sqrt(tsvals),alpha=0.5,marker='.',drawstyle='steps-mid',label="Sig+bkg")
+            plt.errorbar(x,trvals,yerr=np.sqrt(trvals),alpha=0.5,marker='.',drawstyle='steps-mid',label="bkg")
+            plt.xlabel("t")
+            plt.show()
+        z_emp = zemp(ts,tr,plot)
+        z_as  = np.median(np.array(t_sig))
+        #print("z_emp",z_emp,"z_as",z_as)
     return z_as,z_emp
     #z_as, z_emp = plot_2distribution_new(ts, tr, df=np.median(ts), xmin=np.min(tr)-1, xmax=np.max(tr)+1, #ymax=0.03, 
     #                   nbins=8, save=False, output_path='./', Z_print=[1.645,2.33],
     #                   label1='REF', label2='DATA', save_name='', print_Zscore=True)
     #return z_as,z_emp
 
-def z_yield(data,labels,ref,ref_labels,iskip,iNb=1000,iNr=10000,iMin=0,iMax=300,iNbins=11,ntoys=1000,plot=True):
+def z_yield(data,labels,ref,ref_labels,iskip,iNb=1000,iNr=10000,iMin=0,iMax=300,iNbins=11,ntoys=1000,plot=True,iOption=0): #0 maha, 1 maxlikelihood (1D)
     sig_yield = np.linspace(iMin,iMax,iNbins) 
     z_as=[]; z_emp=[]
     for pYield in sig_yield: 
-        pZ_as,pZ_emp = run_toy(pYield, iNb, iNr,data,labels,ref,ref_labels,iskip,ntoys=ntoys,plot=False)
+        pZ_as,pZ_emp = run_toy(pYield, iNb, iNr,data,labels,ref,ref_labels,iskip,ntoys=ntoys,plot=False,iOption=iOption)
         z_as.append(pZ_as)
         z_emp.append(pZ_emp)
 

@@ -223,12 +223,12 @@ class FlatDataset(GenericDataModule):
         self.maxs =[]
         self.peaks=[]
         #Do Basic
-        self.mins.append(0); self.maxs.append(1); self.peaks.append(0.05)
-        self.mins.append(0); self.maxs.append(1); self.peaks.append(1.-0.05)
-        if not self.triangle:
-            self.mins[1] = 1.
-            self.maxs[0] = 0.15
-            self.maxs[1] = 0.15
+        #self.mins.append(0); self.maxs.append(1); self.peaks.append(0.05)
+        #self.mins.append(0); self.maxs.append(1); self.peaks.append(1.-0.05)
+        #if not self.triangle:
+        #    self.mins[1] = 1.
+        #    self.maxs[0] = 0.15
+        #    self.maxs[1] = 0.15
         #Do assignment
         if self.triangle:
             self.nvars(self.ndisc,self.nsigs)
@@ -350,8 +350,8 @@ class FlatDataset(GenericDataModule):
         for pVar in range(self.ndisc):
             pId = pVar*iNSigs
             for pSig in range(iNSigs):
-                if pVar == 0 and pSig < 2:
-                    continue
+                #if pVar == 0 and pSig < 2:
+                #    continue
                 pPass  = False
                 ntries = 0
                 pMean = pSigma = 0
@@ -611,11 +611,11 @@ class FlatDataset(GenericDataModule):
             )
         plt.show()
 
-    def zscoreplot(self,mc_out,da_out,mc_lab,da_lab,mc_raw,da_raw,intoys=50,plot=True):
-        xy1,zscore1=dutils.z_yield  (mc_out,mc_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False)
-        xy1d,zscore1d=dutils.z_yield(da_out,da_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False)
-        xy2,zscore2=dutils.z_yield  (mc_raw,mc_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False)
-        xy2d,zscore2d=dutils.z_yield(da_raw,da_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False)
+    def zscoreplot(self,mc_out,da_out,mc_lab,da_lab,mc_raw,da_raw,intoys=50,plot=True,iOption=0):
+        xy1,zscore1=dutils.z_yield  (mc_out,mc_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False,iOption=iOption)
+        xy1d,zscore1d=dutils.z_yield(da_out,da_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False,iOption=iOption)
+        xy2,zscore2=dutils.z_yield  (mc_raw,mc_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False,iOption=iOption)
+        xy2d,zscore2d=dutils.z_yield(da_raw,da_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False,iOption=iOption)
 
         if plot:
             plt.plot(xy1,zscore1,c='red',label="trained")
@@ -685,6 +685,32 @@ class FlatDataset(GenericDataModule):
 
         return self.model,output_train,da_out,mc_out,mc_lab,da_lab  
 
+    def trainQuickDisc(self,last_dim=16,num_epochs=10,batch_size=1000,plot=True):
+        input_dim  = self.train_data.shape[1]
+        labels=self.train_labels
+        ntrain=10000
+        train_nosig = self.train_data[labels != self.skip]
+        train_sig   = self.train_data[labels == self.skip]
+        ntrain=np.max([ntrain,len(train_sig)])
+
+        ridx=torch.randperm(len(train_nosig))[:ntrain]
+        train_nosig=train_nosig[ridx]
+        train_comb = torch.cat((train_nosig,train_sig[0:ntrain]))
+        train_lab  = torch.cat((torch.zeros(ntrain),torch.ones(ntrain)))
+
+        dset=dutils.GenericDataset(train_comb,train_lab.long())
+        disc_trainloader = torch.utils.data.DataLoader(dset, batch_size=batch_size, shuffle=True)
+        disc_model=dutils.train_disc(num_epochs,disc_trainloader,input_dim,last_dim=last_dim,output_dim=1)
+
+        mc_lab=self.test_labels
+        da_lab=self.test_labels
+        with torch.no_grad():
+            mc_out = (disc_model(self.test_data.float()))
+            da_out = (disc_model(self.trut_data.float()))
+        if plot:
+            self.zscoreplot(mc_out,da_out,mc_lab,da_lab,self.test_data,self.trut_data,intoys=100,iOption=1)
+
+        return disc_model,da_out,mc_out,mc_lab,da_lab  
 
     
 class NoisyImagenetteDataset(GenericDataModule):

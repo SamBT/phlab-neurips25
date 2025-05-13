@@ -45,7 +45,7 @@ class SimCLRModel(pl.LightningModule):
 
         
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        optimizer = torch.optim.Adam(self.parameters(), lr=5e-4)
         scheduler = CosineAnnealingLR(optimizer, T_max=10)
         return {
             "optimizer": optimizer,
