@@ -696,8 +696,8 @@ class FlatDataset(GenericDataModule):
         ntrain=np.max([ntrain,len(train_sig)])
 
         ridx=torch.randperm(len(train_nosig))[:ntrain]
-        train_nosig=train_nosig[ridx]
-        train_comb = torch.cat((train_nosig,train_sig[0:ntrain]))
+        train_nosig1=train_nosig[ridx]
+        train_comb = torch.cat((train_nosig1,train_sig[:ntrain]))
         train_lab  = torch.cat((torch.zeros(ntrain),torch.ones(ntrain)))
 
         dset=dutils.GenericDataset(train_comb,train_lab.long())
@@ -709,6 +709,7 @@ class FlatDataset(GenericDataModule):
         with torch.no_grad():
             mc_out = (disc_model(self.test_data.float()))
             da_out = (disc_model(self.trut_data.float()))
+
         if plot:
             self.zscoreplot(mc_out,da_out,mc_lab,da_lab,self.test_data,self.trut_data,intoys=100,iOption=1)
 

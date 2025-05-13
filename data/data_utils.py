@@ -457,6 +457,7 @@ def check_disc(itest_data,itest_labels,imodel):
     plt.hist(vars[labels==0],alpha=0.5)
     plt.hist(vars[labels==1],alpha=0.5)
     #plt.hist(vars[labels==2],alpha=0.5)
+    plt.yscale('log')
     plt.show()
 
 def approxDist(iData, iModel, iLabel, nsamps):
@@ -745,6 +746,7 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1
             #dist     = maxlikelihood(torch.cat((sig,bkg)),model,model_labels,sig_idx,nsig,nbkg)
             dist     = ksscore(torch.cat((sig,bkg)),ref,ref_label,sig_idx)
             ref_dist = ksscore(brf,ref,ref_label,sig_idx)
+        
         t_sig.append(dist)
         t_ref.append(ref_dist)
         ts, tr = np.array(t_sig), np.array(t_ref)
