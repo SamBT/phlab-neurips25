@@ -80,12 +80,6 @@ def make_corner2(x, labels, label_names=None, axwidth=3, return_fig=False,
             plt.axis('off')
 
     unique_labels = sorted(list(set(labels)))
-    color_palettes = {}
-    import seaborn as sns
-    for il, label in enumerate(unique_labels):
-        # Create a sequential palette from the base color
-        base_color = f"C{il}"
-        color_palettes[label] = sns.light_palette(base_color, as_cmap=True, )
     
     patches = []
     xlims = [[np.quantile(x[:,i],0.00),np.quantile(x[:,i],1.0)] for i in range(N)]
@@ -124,9 +118,6 @@ def make_corner2(x, labels, label_names=None, axwidth=3, return_fig=False,
                             idx = np.random.choice(len(_x), 1000, replace=False)
                             _x, _y = _x[idx], _y[idx]
                     Nlevels = 20
-                    linear_space = np.linspace(0, 1, Nlevels)[1:]
-                    transformed_space = 1 - np.exp(-linear_space * 1.5)
-                    transformed_space = np.r_[transformed_space, 1]
                     sns.kdeplot(x=_x, y=_y, ax=ax, cmap=cmap_alpha(f"C{il}", Nlevels), fill=False, linewidths=1,
                                 levels=Nlevels, 
                                 )
@@ -179,7 +170,7 @@ if "__name__" == "__main__":
     }
 
     fig = make_corner2(test_arrays['test']['data'], test_arrays['test']['label'], return_fig=True,
-                label_map={0: [0], 1: [1]}, kde=False,
+                label_map={0: [0], 1: [1]}, kde=True,
                 label_names={0: "All bkg", 1: "Anomaly"}
     )
     fig.show()
