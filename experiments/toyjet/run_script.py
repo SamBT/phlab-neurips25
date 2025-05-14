@@ -26,16 +26,19 @@ def edgeid(iDS):
             edgid = edgid + 1
     return edgid   
 
-def savetoys(iLabel,iSkip,iNToys,mc_out,da_out,mc_lab,da_lab,mc_raw,da_raw,edgeid,iSMax=100,iNbins=21,iRaw=True):
+def savetoys(iLabel,iSkip,iNToys,mc_out,da_out,mc_lab,da_lab,mc_raw,da_raw,edgeid,iSMax=100,iNbins=21,iOption=0):
     if os.path.exists(iLabel+"maha_toys_space.npz"):
         data = np.load(iLabel+"maha_toys_space.npz")
         data_dict = {k: data[k] for k in data.files}
     else:
         data_dict={}
     #MH distance
-    xy1,zscore1=dutils.z_yield  (mc_out,mc_lab,       mc_out,  mc_lab,  iSkip,ntoys=iNToys,iNb=10000,iNr=50000,plot=False,iMin=0,iMax=iSMax,iNbins=iNbins)
-    xy1d,zscore1d=dutils.z_yield(da_out,da_lab,       mc_out,  mc_lab,  iSkip,ntoys=iNToys,iNb=10000,iNr=50000,plot=False,iMin=0,iMax=iSMax,iNbins=iNbins)
-    if iRaw:
+    lOption=0
+    if iOption == 2:
+        lOption=1
+    xy1,zscore1=dutils.z_yield  (mc_out,mc_lab,mc_out,mc_lab,iSkip,ntoys=iNToys,iNb=10000,iNr=50000,plot=False,iMin=0,iMax=iSMax,iNbins=iNbins,iOption=lOption)
+    xy1d,zscore1d=dutils.z_yield(da_out,da_lab,mc_out,mc_lab,iSkip,ntoys=iNToys,iNb=10000,iNr=50000,plot=False,iMin=0,iMax=iSMax,iNbins=iNbins,iOption=lOption)
+    if iOption == 0:
         xy2,zscore2=dutils.z_yield  (mc_raw,mc_lab,mc_raw,  mc_lab,  iSkip,ntoys=iNToys,iNb=10000,iNr=50000,plot=False,iMin=0,iMax=iSMax,iNbins=iNbins)
         xy2d,zscore2d=dutils.z_yield(da_raw,da_lab,mc_raw,  mc_lab,  iSkip,ntoys=iNToys,iNb=10000,iNr=50000,plot=False,iMin=0,iMax=iSMax,iNbins=iNbins)
         data_dict["toymc"]   = zscore1
@@ -47,13 +50,20 @@ def savetoys(iLabel,iSkip,iNToys,mc_out,da_out,mc_lab,da_lab,mc_raw,da_raw,edgei
         data_dict["da_out"]=da_out
         data_dict["mc_lab"]=mc_lab
         data_dict["da_lab"]=da_lab
-    else:
+    elif iOption == 1:
         data_dict["toyfmc"]   = zscore1
         data_dict["toyfdata"] = zscore1d
         data_dict["fmc_out"]=mc_out
         data_dict["fda_out"]=da_out
         data_dict["fmc_lab"]=mc_lab
         data_dict["fda_lab"]=da_lab
+    else :
+        data_dict["toydmc"]   = zscore1
+        data_dict["toyddata"] = zscore1d
+        data_dict["dmc_out"]=mc_out
+        data_dict["dda_out"]=da_out
+        data_dict["dmc_lab"]=mc_lab
+        data_dict["dda_lab"]=da_lab
 
     np.savez(iLabel+"maha_toys_space.npz", **data_dict)
 
@@ -66,12 +76,15 @@ def main():
     parser.add_argument('--nrand', dest='nrand'   ,type=int,default=1)
     parser.add_argument('--embed', dest='embed'   ,type=int,default=4)
     parser.add_argument('--ntrain', dest='ntrain', type=int,default=10000)
-    parser.add_argument('--nbins',  dest='nbins',  type=int,default=31)
+    parser.add_argument('--nbins',  dest='nbins',  type=int,default=21)
     parser.add_argument('--ntoys',  dest='ntoys',  type=int,default=4000)
-    parser.add_argument('--nepochs', dest='nepochs',  type=int,default=15)
+    parser.add_argument('--nepochs', dest='nepochs',  type=int,default=50)
+    parser.add_argument('--niters', dest='niters',  type=int,default=1)
 
     args = parser.parse_args()
-    np.random.seed(args.seed*1000)
+    np.random.seed(args.seed*args.niters)
+    torch.manual_seed(args.seed*args.niters)
+    
     embed_dim=args.embed
     nsigs=args.nsigs
     ndisc=args.ndisc
@@ -81,10 +94,10 @@ def main():
     nj_valid   = args.ntrain
     nj_testy   = args.ntrain*5
     sigmax     = (nj_train*0.03)
-    
-    for pIter in range(10):
-        id='sig'+str(nsigs)+'_disc'+str(ndisc)+'_rand'+str(nrand)+'_seed'+str(args.seed) +'_'+str(pIter)
-        np.random.seed(args.seed*1000 + pIter)
+       
+    for pIter in range(args.niters):
+        id='sig'+str(nsigs)+'_disc'+str(ndisc)+'_rand'+str(nrand)+'_seed'+str(args.seed*args.niters+pIter)
+        np.random.seed(args.seed*args.niters + pIter)
         tjds       = datasets.FlatDataset(nsigs,ndisc,nj_train,nj_valid,nj_testy,nrand)
         edgid      = edgeid(tjds)
     
@@ -94,9 +107,13 @@ def main():
         #MH distance
         skip=tjds.skip
         intoys=args.ntoys
-        savetoys("model_"+id,tjds.skip,args.ntoys,mc_out,da_out,mc_lab,da_lab,tjds.test_data,tjds.trut_data,edgid,iNbins=args.nbins,iSMax=sigmax)
+        savetoys("model_"+id,tjds.skip,args.ntoys,mc_out,da_out,mc_lab,da_lab,tjds.test_data,tjds.trut_data,edgid,iNbins=args.nbins,iSMax=sigmax,iOption=0)
+        #disc latent space
         model_base,otrain,da_out,mc_out,mc_lab,da_lab=tjds.trainQuick(embed_dim=4,num_epochs=nepochs,temp=0.01,plot=False,iFull=True)
-        savetoys("model_"+id,tjds.skip,args.ntoys,mc_out,da_out,mc_lab,da_lab,tjds.test_data,tjds.trut_data,edgid,iNbins=args.nbins,iSMax=sigmax,iRaw=False)
+        savetoys("model_"+id,tjds.skip,args.ntoys,mc_out,da_out,mc_lab,da_lab,tjds.test_data,tjds.trut_data,edgid,iNbins=args.nbins,iSMax=sigmax,iOption=1)
+        #discriminator
+        model_base,da_out,mc_out,mc_lab,da_lab=tjds.trainQuickDisc(last_dim=16,num_epochs=nepochs,plot=False)
+        savetoys("model_"+id,tjds.skip,args.ntoys,mc_out,da_out,mc_lab,da_lab,tjds.test_data,tjds.trut_data,edgid,iNbins=args.nbins,iSMax=sigmax,iOption=2)
         
     return
     #now correcting with weak labels
