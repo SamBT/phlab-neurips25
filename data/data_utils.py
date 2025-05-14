@@ -18,6 +18,7 @@ from scipy import interpolate
 import lmfit
 from collections import defaultdict
 
+        
 class viewGenerator:
     """
         This class is used to generate multiple views of the same data point using `transform`.
@@ -643,9 +644,59 @@ def gausSpline(x,mean,sigma,a1,a2,iTck=None):
     #print("bkg:",bkg)
     return sig+bkg
 
-def spline(x,a2,iTck=None):
+def bspline(x,a2,iTck=None):
     bkg = interpolate.splev(x, iTck)*a2
     return bkg
+
+def sbspline(x,a1,a2,iTck1=None,iTck2=None):
+    sig = interpolate.splev(x, iTck)*a1
+    bkg = interpolate.splev(x, iTck)*a2
+    return sig+bkg
+
+def dLL(iData, iRef, iRefLabel, sig_idx, iNSig, iNBkg, iNBins=100):
+    #start with binned fit to be easy
+    data_sort  = np.sort(iData.flatten().numpy())
+    ntot   = len(data_sort)
+    width  = int(ntot/iNBins)
+    binsRange=[]
+    binsRange.append(1.1)
+    pVal=data_sort[-1]
+    for pBin in range(iNBins-1):
+        #pBinHigh = np.where(pBin == 0, 1.1, data_sort[-(iter)*pBin]
+        pBinLow =  data_sort[-(width)*(pBin+1)]
+        if pVal == pBinLow:
+            continue
+        binsRange.append(pBinLow)
+        pVal=pBinLow
+    binsRange.append(-1)
+    bins=np.sort(np.array(binsRange))
+    data,bin_edges = np.histogram(iData,bins=bins)
+    s,_  = np.histogram(iRef[iRefLabel == sig_idx],bins=bins)
+    b,_  = np.histogram(iRef[iRefLabel != sig_idx],bins=bins)
+    bscale=iNBkg/np.sum(b)
+    sscale=iNSig/np.sum(s)
+    b*=bscale
+    s*=sscale
+    btck                = interpolate.splrep(x, refhist)
+    stck                = interpolate.splrep(x, refhist)
+    smodel             = lmfit.Model(sbspline)
+    bmodel             = lmfit.Model(bspline)
+    ps = smodel.make_params(a2=1.)
+    pb = bmodel.make_params(a1=1,a2=1.)
+    weights = 1./np.sqrt(np.maximum(refhist,0.1))
+    resultsb = bmodel.fit(data=data,params=pb,x=x,weights=weights,iTck1=stck,iTck2=btck)
+    lmfit.report_fit(resultb)
+    resultb  = smodel.fit(data=data,params=ps,x=x,weights=weights,iTck=btck)
+    lmfit.report_fit(results)
+    #plt.errorbar(x,datahist,yerr=np.sqrt(datahist),marker='o')
+    #plt.errorbar(x,refhist*resultb.params['a2'].value,yerr=np.sqrt(refhist),marker='o')
+    #plt.yscale('log')
+    #plt.show()
+    #return resultb
+    #results.plot()
+    return resultsb.chisq-resultsb.chisq
+    #return results
+
 
 def fitDiff(data,ref):
     #start with binned fit to be easy

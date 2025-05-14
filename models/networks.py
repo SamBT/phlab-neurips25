@@ -15,7 +15,8 @@ activations = {
     "elu": nn.ELU(),
     "leaky_relu": nn.LeakyReLU(),
     "gelu": nn.GELU(),
-    "tanh": nn.Tanh()
+    "tanh": nn.Tanh(),
+    "swish": nn.SiLU()
 }
 
 class MLP(nn.Module):

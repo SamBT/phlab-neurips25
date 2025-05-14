@@ -33,7 +33,7 @@ class SimCLRModel(pl.LightningModule):
         if pretrain_ckpt is not None:
             self.load_state_dict(torch.load(pretrain_ckpt)['state_dict'])
         self.save_hyperparameters()
-        self.apply(self.init_weights)
+        #self.apply(self.init_weights)
         if self.shifter is not None:
             self.shifter.apply(self.init_weights_to_zero)
 
@@ -56,7 +56,7 @@ class SimCLRModel(pl.LightningModule):
                 nn.init.zeros_(m.bias)
             
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=5e-4)
+        optimizer = torch.optim.Adam(self.parameters(), lr=5e-4,weight_decay=1e-5)
         scheduler = CosineAnnealingLR(optimizer, T_max=10)
         return {
             "optimizer": optimizer,
@@ -212,3 +212,12 @@ class JetClassSimCLRModel(SimCLRModel):
             loss = loss_simclr
         
         return loss
+
+
+class LossCollector(pl.Callback):
+    def __init__(self):
+        self.losses = []
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        loss = outputs["loss"] if isinstance(outputs, dict) else outputs
+        self.losses.append(loss.detach().cpu().item())
