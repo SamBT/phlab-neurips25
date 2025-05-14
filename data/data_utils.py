@@ -904,7 +904,7 @@ def z_yield(data,labels,ref,ref_labels,iskip,iNb=1000,iNr=10000,iMin=0,iMax=300,
     z_emp = np.array(z_emp)
     z_empmax=np.max(z_emp)
     z_emp_out = np.where( z_emp == z_empmax, z_emp*5, z_emp)
-    return sig_yield,np.min(np.vstack((z_as,z_emp_out)),axis=0)
+    return sig_yield,z_as,z_emp#np.min(np.vstack((z_as,z_emp_out)),axis=0)
 #from GENutils import *
 #from ANALYSISutils import *
 

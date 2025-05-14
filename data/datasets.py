@@ -630,7 +630,13 @@ class FlatDataset(GenericDataModule):
             ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 0].numpy(),density=True,alpha=0.5,bins=bins,label='0')
             ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 1].numpy(),density=True,alpha=0.5,bins=bins,label='1')
             ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 2].numpy(),density=True,alpha=0.5,bins=bins,label='2')
-            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 3].numpy(),density=True,alpha=0.5,bins=bins,label='skip')
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 3].numpy(),density=True,alpha=0.5,bins=bins,label='3')
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 4].numpy(),density=True,alpha=0.5,bins=bins,label='4')
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 5].numpy(),density=True,alpha=0.5,bins=bins,label='5')
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 6].numpy(),density=True,alpha=0.5,bins=bins,label='6')
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 7].numpy(),density=True,alpha=0.5,bins=bins,label='7')
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 7].numpy(),density=True,alpha=0.5,bins=bins,label='8')
+            ax[var//3,var % 3].hist(self.train_data[:,var][self.train_labels == 7].numpy(),density=True,alpha=0.5,bins=bins,label='9')
             ax[var//3,var % 3].set_xlabel("var "+str(var))
             ax[var//3,var % 3].set_xlim(-0.5,1.5)
             ax[var//3,var % 3].legend()
@@ -667,11 +673,11 @@ class FlatDataset(GenericDataModule):
             )
         plt.show()
 
-    def zscoreplot(self,mc_out,da_out,mc_lab,da_lab,mc_raw,da_raw,intoys=50,plot=True,iOption=0):
-        xy1,zscore1=dutils.z_yield  (mc_out,mc_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=10000,plot=False,iOption=iOption)
-        xy1d,zscore1d=dutils.z_yield(da_out,da_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=10000,plot=False,iOption=iOption)
-        xy2,zscore2=dutils.z_yield  (mc_raw,mc_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=10000,plot=False,iOption=iOption)
-        xy2d,zscore2d=dutils.z_yield(da_raw,da_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=10000,plot=False,iOption=iOption)
+    def zscoreplot(self,mc_out,da_out,mc_lab,da_lab,mc_raw,da_raw,intoys=500,plot=True,iOption=0):
+        xy1,zscore1,zscore1e=dutils.z_yield  (mc_out,mc_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=50000,plot=False,iOption=iOption)
+        xy1d,zscore1d,zscore1de=dutils.z_yield(da_out,da_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=50000,plot=False,iOption=iOption)
+        xy2,zscore2,zscore2e=dutils.z_yield  (mc_raw,mc_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=50000,plot=False,iOption=iOption)
+        xy2d,zscore2d,zscore2de=dutils.z_yield(da_raw,da_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=50000,plot=False,iOption=iOption)
 
         if plot:
             plt.plot(xy1,zscore1,c='red',label="trained")
@@ -683,8 +689,18 @@ class FlatDataset(GenericDataModule):
             plt.legend()
             plt.show()
 
+            plt.plot(xy1,zscore1e,c='red',label="trained")
+            plt.plot(xy2,zscore2e,c='blue',label="raw")
+            plt.plot(xy1d,zscore1de,c='red',linestyle='dashed',label="trained(data)")
+            plt.plot(xy2d,zscore2de,c='blue',linestyle='dashed',label="raw(data)")
+            plt.xlabel("yield")
+            plt.ylabel("z-score")
+            plt.legend()
+            plt.show()
 
-    def trainQuick(self,embed_dim=4,hidden_dims=[128,64,32,16],num_epochs=10,batch_size=1000,plot=True,temp=0.01,iFull=False):
+            
+    #def [128,64,32,16]         
+    def trainQuick(self,embed_dim=4,hidden_dims=[128,128,128,32],num_epochs=10,batch_size=1000,plot=True,temp=0.01,iFull=False):
         #now contrastive model
         #embed_dim  = 4 #not making it smaller than input space        input_dim  = self.train_data.shape[1]
         input_dim  = self.train_data.shape[1]
