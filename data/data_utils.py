@@ -653,7 +653,58 @@ def sbspline(x,a1,a2,iTck1=None,iTck2=None):
     bkg = interpolate.splev(x, iTck)*a2
     return sig+bkg
 
+
+#def dLL(iData, iRef, iSig, iNSig, iNBkg, iNBins=100):
 def dLL(iData, iRef, iRefLabel, sig_idx, iNSig, iNBkg, iNBins=100):
+    bins = np.linspace(0,1,iNBins+1)
+    
+    data,bin_edges = np.histogram(iData,bins=bins)
+    ref_data,_  = np.histogram(iRef[iRefLabel != sig_idx],bins=bins)
+    sig_data,_  = np.histogram(iRef[iRefLabel == sig_idx],bins=bins)
+    
+    ref_data  = ref_data * iNBkg/np.sum(ref_data)
+    sig_data = sig_data * iNSig/np.sum(sig_data)
+    
+    x = (bins[:-1]+bins[1:])/2
+    # fit splines to sig and bkg shape
+    bkg_spline                = interpolate.splrep(x, ref_data)
+    sig_spline                = interpolate.splrep(x, sig_data)
+    
+    def bkg_only_spline(x,a2):
+        bkg = interpolate.splev(x, bkg_spline)*a2
+        return bkg
+    def sig_plus_bkg_spline(x,a1,a2):
+        sig = interpolate.splev(x, sig_spline)*a1
+        bkg = interpolate.splev(x, bkg_spline)*a2
+        return sig+bkg
+    
+    #b_model             = lmfit.Model(bkg_only_spline)
+    b_model = lmfit.Model(bkg_only_spline)
+    params_b = b_model.make_params(a2=1.)
+    
+    #sb_model             = lmfit.Model(sig_plus_bkg_spline)
+    sb_model = lmfit.Model(sig_plus_bkg_spline)
+    params_sb = sb_model.make_params(a1=1.,a2=1.)
+    
+    weights = 1./np.sqrt(np.maximum(data,0.1))
+    result_sb = sb_model.fit(data=data,params=params_sb,weights=weights,x=x)
+    result_b  = b_model.fit(data=data,params=params_b,weights=weights,x=x)
+
+    #lmfit.report_fit(result_b)
+    #result_b.plot()
+    #plt.errorbar(x,data,yerr=np.sqrt(data),marker='o')
+    #plt.errorbar(x,ref_data*result_b.params['a2'].value,yerr=np.sqrt(ref_data),marker='o')
+    #plt.yscale('log')
+    #plt.show()
+    #return resultb
+    #result_sb.plot()
+    #lmfit.report_fit(result_sb)
+    dLL = result_b.chisqr - result_sb.chisqr
+    zscore = norm.ppf(chi2.cdf(dLL,1))
+    return zscore
+
+
+def dLL_old(iData, iRef, iRefLabel, sig_idx, iNSig, iNBkg, iNBins=100):
     #start with binned fit to be easy
     data_sort  = np.sort(iData.flatten().numpy())
     ntot   = len(data_sort)
@@ -791,13 +842,16 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1
         if iOption == 0:
             dist,_    = mahalanobis_dist(torch.cat((sig,bkg)),ref,ref_label,plot=False,fit=False)
             ref_dist,_= mahalanobis_dist(brf,ref,ref_label,plot=False,fit=False)
-        else:
+        elif iOption == 1:
             #totref=torch.cat((ref,srf))
             #totrefl=torch.cat((ref_label,srf_label))
             #dist     = maxlikelihood(torch.cat((sig,bkg)),model,model_labels,sig_idx,nsig,nbkg)
             dist     = ksscore(torch.cat((sig,bkg)),ref,ref_label,sig_idx)
             ref_dist = ksscore(brf,ref,ref_label,sig_idx)
-        
+        else:
+            dist     = dLL(torch.cat((sig,bkg)),model,model_labels,sig_idx,nsig,nbkg)
+            ref_dist = 0#dLL(brf                 ,model,model_labels,sig_idx,nsig,nbkg)
+            
         t_sig.append(dist)
         t_ref.append(ref_dist)
         ts, tr = np.array(t_sig), np.array(t_ref)
@@ -810,21 +864,24 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1
             plt.errorbar(x,tsvals/np.sum(tsvals),yerr=np.sqrt(tsvals)/np.sum(tsvals),alpha=0.5,marker='.',drawstyle='steps-mid',label="Sig+bkg")
             plt.errorbar(x,trvals/np.sum(trvals),yerr=np.sqrt(trvals)/np.sum(trvals),alpha=0.5,marker='.',drawstyle='steps-mid',label="bkg")
             plt.xlabel("t")
+            plt.legend()
             plt.show()
         z_as=zscore(ts,tr,plot)
         z_emp=zemp(ts,tr,plot)
     else:
         if plot:
-            bins=np.linspace(np.max(ts)*(-2.2),np.max(ts)*2.2,20)
+            bins=np.linspace(-10.2,10.2,20)
             x   = 0.5*(bins[1:]+bins[:-1])
             trvals,_ = np.histogram(tr,bins=bins)
             tsvals,_ = np.histogram(ts,bins=bins)
             plt.errorbar(x,tsvals,yerr=np.sqrt(tsvals),alpha=0.5,marker='.',drawstyle='steps-mid',label="Sig+bkg")
             plt.errorbar(x,trvals,yerr=np.sqrt(trvals),alpha=0.5,marker='.',drawstyle='steps-mid',label="bkg")
             plt.xlabel("t")
+            plt.legend()
             plt.show()
-        z_emp = zemp(ts,tr,plot)
-        z_as  = np.median(np.array(t_sig))
+        
+        z_emp = np.median(ts[0 < ts])#zemp(ts,tr,plot)
+        z_as  = np.median(ts[0 < ts])
         #print("z_emp",z_emp,"z_as",z_as)
     return z_as,z_emp
     #z_as, z_emp = plot_2distribution_new(ts, tr, df=np.median(ts), xmin=np.min(tr)-1, xmax=np.max(tr)+1, #ymax=0.03, 

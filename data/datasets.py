@@ -773,7 +773,7 @@ class FlatDataset(GenericDataModule):
             da_out = (disc_model(self.trut_data.float()))
 
         if plot:
-            self.zscoreplot(mc_out,da_out,mc_lab,da_lab,self.test_data,self.trut_data,intoys=100,iOption=1)
+            self.zscoreplot(mc_out,da_out,mc_lab,da_lab,self.test_data,self.trut_data,intoys=50,iOption=2)
 
         return disc_model,da_out,mc_out,mc_lab,da_lab  
 
