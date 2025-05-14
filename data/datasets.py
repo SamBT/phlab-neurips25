@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 from models.losses import SupervisedSimCLRLoss
 #from models.networks import CustomEfficientNet
 from models.networks import MLP
-from models.litmodels import SimCLRModel
+from models.litmodels import SimCLRModel,LossCollector
 import corner
 import matplotlib.lines as mlines
 
@@ -343,6 +343,41 @@ class FlatDataset(GenericDataModule):
         print("choice",self.choice)
 
 
+    def nvars_gaus_other(self,iD,iNSigs,iNTries=5000,iSigCut=1.2, iSigMax=5.):
+        #print("Max:",pairwise_max(iD,[0,1,0.05],[0,1,0.95]))
+        ntries=0
+        maxes=[]
+        for pVar in range(self.ndisc):
+            pId = pVar*iNSigs
+            for pSig in range(iNSigs):
+                #if pVar == 0 and pSig < 2:
+                #    continue
+                pPass  = False
+                ntries = 0
+                #pMean = pSigma = 0
+                while pPass == False:
+                    pMean   = np.random.uniform(0.,1.,iNSigs)
+                    pSigma  = np.random.uniform(0.02,0.5,iNSigs)
+                    testMax,testMin =  self.pairwise_maxs(iD,pMean,pSigma)
+                    if ((iSigMax > testMax > iSigCut) and (iSigMax > testMin > iSigCut)) or ntries > 999:
+                        pPass = True
+                        maxes.append(testMin)
+                    ntries += 1
+                if ntries < iNTries:
+                    for pId in range(len(pMean)):
+                        self.mins.append(pMean[pId])
+                        self.maxs.append(pSigma[pId])
+                    print("Ntries",ntries)
+                else:
+                    print("too many tries, reconfigure",ntries)
+        print("Maxes:",maxes)
+        print("Means:",self.mins,"\nSigmas:",self.maxs)
+        self.choice = []
+        for pVar in range(self.ndisc):
+            #self.choice.append(np.random.choice(np.arange(self.nsigs),self.nsigs,replace=False))
+            self.choice.append(pVar*iNSigs+np.random.choice(np.arange(iNSigs),self.nsigs,replace=False))
+        print("choice",self.choice)
+
     def nvars_gaus(self,iD,iNSigs,iNTries=5000,iSigCut=3.5, iSigMax=7.):
         #print("Max:",pairwise_max(iD,[0,1,0.05],[0,1,0.95]))
         ntries=0
@@ -382,7 +417,6 @@ class FlatDataset(GenericDataModule):
             #self.choice.append(np.random.choice(np.arange(self.nsigs),self.nsigs,replace=False))
             self.choice.append(pVar*iNSigs+np.random.choice(np.arange(iNSigs),self.nsigs,replace=False))
         print("choice",self.choice)
-        
         
     #triangular distribution functions
     def triangular_pdf(self, x, a, b, c):
@@ -445,6 +479,27 @@ class FlatDataset(GenericDataModule):
         maxval=(np.max(vals[(vals > 0) & (vals < 1e1)]))#**iD
         #return vals**iD
         return maxval
+
+    def pairwise_maxs(self, iD,pMeans=[],pSigmas=[],iNSig=1e2,iNBkg=1e4):
+        xrange=np.linspace(0.,3*np.max(pSigmas),300)
+        lMaxVal=0
+        lMinVal=10
+        for pId in range(len(pMeans)):
+            c_val = pMeans[pId]
+            ints1=self.gaus_int(c_val-xrange,c_val+xrange,pMeans[pId],pSigmas[pId])
+            ints2=np.zeros(ints1.shape)
+            for pIdS in range(len(pMeans)):
+                if pIdS == pId:
+                    continue
+                ints2+=self.gaus_int(c_val-xrange,c_val+xrange,pMeans[pIdS],pSigmas[pIdS])
+            vals=ints1[1:-1]*iNSig/np.sqrt(ints2[1:-1]*iNBkg+0.1)
+            maxval=(np.max(vals[(vals > 0) & (vals < 1e1)]))#**iD
+            if maxval > lMaxVal:
+                lMaxVal=maxval
+            if maxval < lMinVal:
+                lMinVal=maxval
+        #return vals**iD
+        return lMaxVal,lMinVal
     
     def random_rotation_matrix(self,dim):
         # Generate a random orthogonal matrix
@@ -592,6 +647,7 @@ class FlatDataset(GenericDataModule):
         #    ax[var//3,var % 3].legend()
 
     def cornerQuick(self,output,output1,labels,labels1):
+        #output=torch.sigmoid(output)
         fig = plt.figure(figsize=(8,8))
         corner.corner(output[labels==0].numpy(),fig=fig,color="C0", label='background')
         corner.corner(output[labels==1].numpy(),fig=fig,color="C1", label='signal 1')
@@ -612,10 +668,10 @@ class FlatDataset(GenericDataModule):
         plt.show()
 
     def zscoreplot(self,mc_out,da_out,mc_lab,da_lab,mc_raw,da_raw,intoys=50,plot=True,iOption=0):
-        xy1,zscore1=dutils.z_yield  (mc_out,mc_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False,iOption=iOption)
-        xy1d,zscore1d=dutils.z_yield(da_out,da_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False,iOption=iOption)
-        xy2,zscore2=dutils.z_yield  (mc_raw,mc_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False,iOption=iOption)
-        xy2d,zscore2d=dutils.z_yield(da_raw,da_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=20000,plot=False,iOption=iOption)
+        xy1,zscore1=dutils.z_yield  (mc_out,mc_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=10000,plot=False,iOption=iOption)
+        xy1d,zscore1d=dutils.z_yield(da_out,da_lab,       mc_out,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=10000,plot=False,iOption=iOption)
+        xy2,zscore2=dutils.z_yield  (mc_raw,mc_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=10000,plot=False,iOption=iOption)
+        xy2d,zscore2d=dutils.z_yield(da_raw,da_lab,       mc_raw,  mc_lab,  self.skip,ntoys=intoys,iNb=10000,iNr=10000,plot=False,iOption=iOption)
 
         if plot:
             plt.plot(xy1,zscore1,c='red',label="trained")
@@ -632,7 +688,7 @@ class FlatDataset(GenericDataModule):
         #now contrastive model
         #embed_dim  = 4 #not making it smaller than input space        input_dim  = self.train_data.shape[1]
         input_dim  = self.train_data.shape[1]
-        embedder   = MLP(input_dim=input_dim,hidden_dims=hidden_dims,output_dim=embed_dim,output_activation="sigmoid",dropout=0.1)#.to(device)
+        embedder   = MLP(input_dim=input_dim,hidden_dims=hidden_dims,output_dim=embed_dim)#,output_activation="swish")#,dropout=0.1)#.to(device)
         projector  = MLP(input_dim=embed_dim,hidden_dims=[embed_dim],output_dim=embed_dim)
         classifier = MLP(input_dim=embed_dim,hidden_dims=[16,16],output_dim=(self.nsigs))
         shifter    = None#MLP(input_dim=embed_dim,hidden_dims=[32,32,16],output_dim=embed_dim,activation='relu')
@@ -643,8 +699,14 @@ class FlatDataset(GenericDataModule):
         if iFull:
             trainloader = torch.utils.data.DataLoader(self.train_dataset_basic_full, batch_size=batch_size, shuffle=True,num_workers=self.num_workers,persistent_workers=True)
         #dutils.train_generic(num_epochs,trainloader,self.model,criterion,optimizer)
-        trainer = pl.Trainer(max_epochs=num_epochs)
-        trainer.fit(model=self.model, train_dataloaders=trainloader, val_dataloaders=self.val_dataloader());
+        loss_collector = LossCollector()
+        trainer = pl.Trainer(max_epochs=num_epochs,callbacks=[loss_collector])
+        trainer.fit(model=self.model, train_dataloaders=trainloader, val_dataloaders=self.val_dataloader())
+        print(loss_collector.losses[0],"-",loss_collector.losses[-1])
+        if loss_collector.losses[-1] > loss_collector.losses[0]*0.8:
+            self.model.apply(self.model.init_weights)
+            trainer.fit(model=self.model, train_dataloaders=trainloader, val_dataloaders=self.val_dataloader())
+        
         mc_lab =self.test_labels.int()
         da_lab=self.trut_labels.int()
         with torch.no_grad():
