@@ -233,7 +233,7 @@ class FlatDataset(GenericDataModule):
         if self.triangle:
             self.nvars(self.ndisc,self.nsigs)
         else:
-            self.nvars_gaus(self.ndisc,self.nsigs)
+            self.nvars_gaus_t2(self.ndisc,self.nsigs)
 
         self.view_generator = dutils.viewGenerator(dutils.shift(),2)
         self.train_data, self.train_labels = self.generate(self.num_train)
@@ -417,7 +417,50 @@ class FlatDataset(GenericDataModule):
             #self.choice.append(np.random.choice(np.arange(self.nsigs),self.nsigs,replace=False))
             self.choice.append(pVar*iNSigs+np.random.choice(np.arange(iNSigs),self.nsigs,replace=False))
         print("choice",self.choice)
-        
+
+
+    def nvars_gaus_t2(self,iD,iNSigs,iNTries=5000,iSigCut=3.5, iSigMax=7.):
+        ntries=0
+        maxes=[]
+        self.mins = np.zeros(self.ndisc*iNSigs)
+        self.maxs = np.zeros(self.ndisc*iNSigs)
+        for pSig in range(iNSigs):
+            if pSig == 0:
+                self.mins[0::iNSigs]   = np.random.uniform(0.,1.,self.ndisc)
+                self.maxs[0::iNSigs]   = np.random.uniform(0.02,0.5,self.ndisc)
+                continue
+            for pVar in range(0,self.ndisc):
+                pPass  = False
+                ntries = 0
+                pMean = pSigma = 0
+                while pPass == False:
+                    pMean   = np.random.uniform(0.,1.)
+                    pSigma  = np.random.uniform(0.02,0.5)
+                    tMax = 2*iSigMax
+                    for pVal in range(pSig):
+                        pId = int(pVar*iNSigs+pVal)
+                        #print(pId,pVar,iNSigs,pVal,self.mins[4])
+                        testMax =  self.pairwise_max(iD,[pMean,pSigma],[self.mins[pId],self.maxs[pId]])
+                        if  tMax > testMax:
+                            tMax = testMax
+                    if iSigMax > tMax > iSigCut or ntries > 999:
+                        pPass = True
+                        maxes.append(tMax)
+                    ntries += 1
+                if ntries < iNTries:
+                    pId = int(pVar*iNSigs+pSig)
+                    self.mins[pId] = pMean
+                    self.maxs[pId] = pSigma
+                else:
+                    print("too many tries, reconfigure",ntries)
+        print("Maxes:",maxes)
+        print("Means:",self.mins,"\nSigmas:",self.maxs)
+        self.choice = []
+        for pVar in range(self.ndisc):
+            #self.choice.append(np.random.choice(np.arange(self.nsigs),self.nsigs,replace=False))
+            self.choice.append(pVar*iNSigs+np.random.choice(np.arange(iNSigs),self.nsigs,replace=False))
+        print("choice",self.choice)
+
     #triangular distribution functions
     def triangular_pdf(self, x, a, b, c):
         x = np.asarray(x)
