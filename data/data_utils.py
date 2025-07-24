@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from models.networks import MLP
-from models.losses import SupervisedSimCLRLoss
+from models.losses import SupervisedSimCLRLoss, NPLMLoss
 from torch.utils.data import Dataset, DataLoader, TensorDataset, IterableDataset, ConcatDataset, Sampler
 from torchvision.datasets import VisionDataset
 from torchvision.transforms import InterpolationMode
@@ -12,6 +12,8 @@ import torchvision.transforms.v2 as v2
 import numpy as np
 from utils.MAHALANOBISutils import compute_empirical_means,compute_empirical_cov_matrix,mahalanobis_test
 from utils.ANALYSISutils import plot_2distribution_new
+from utils.SPARKutils import Hierarchical,Annealing
+from utils.PLOTutils import plot_reconstruction
 #import utils.NPLMutils as nplm
 from scipy.stats import norm,chi2,kstest
 from scipy import interpolate
@@ -583,10 +585,7 @@ class ConcatWithLabels(Dataset):
     def __len__(self) -> int:
         return self._len
 
-#def approxDist(iData, iModel, iLabel, nsamps):
-
-
-def mahalanobis_dist(data, ref, ref_label,plot=True,fit=False,rule='sum'):#, sig_label=-1, seed=0, n_ref=1e4, n_bkg=1e3, n_sig=1e2, z_ratio=0.1, anomaly_type ='', plot=True, pois_ON=False):
+def mahalanobis_dist(data, ref, ref_label,plot=False,fit=False,rule='sum'):#, sig_label=-1, seed=0, n_ref=1e4, n_bkg=1e3, n_sig=1e2, z_ratio=0.1, anomaly_type ='', plot=True, pois_ON=False):
     '''
     - computes the mahalnobis test for the dataset 
     '''
@@ -704,6 +703,110 @@ def dLL(iData, iRef, iRefLabel, sig_idx, iNSig, iNBkg, iNBins=100):
     return zscore
 
 
+def initSparkKer(iFeature, n_layers, M, iWidth_init=[10], d=1):
+    widths_init    = [np.ones((M[i], d))*iWidth_init[i] for i in range(n_layers)] 
+    coeffs_init    = [(np.random.binomial(p=0.5, n=1, size=(M[i], 1))*2-1)*[0] for i in range(n_layers)]
+    centroids_init = [iFeature[np.random.randint(iFeature.shape[0], size=M[i]), :] for i in range(n_layers)] #list
+    coeffs_init = [torch.from_numpy(coeffs_init[i]).double() for i in range(n_layers)]
+    widths_init = [torch.from_numpy(widths_init[i]).double() for i in range(n_layers)]
+    return widths_init,coeffs_init,centroids_init
+
+def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroids = [1],t_ini=0,decay_epochs=0.9,lr=0.01,iNEpochs=[10001],patience=1000,iPlot=True):
+    d=iData.shape[1]
+    output_folder='tmp/'
+    minloss=100
+    batch_size=len(iData)
+    #dataset = TensorDataset(iData, iTarget)
+    #trainloader       = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True,num_workers=2,persistent_workers=True)
+    #valloader         = torch.utils.data.DataLoader(test_dataset,  batch_size=batch_size, shuffle=False,num_workers=2,persistent_workers=True)
+    for n in range(n_layers):
+        optimizer = torch.optim.Adam(iModel.parameters(n), lr=lr)
+        for i in range(int(iNEpochs[n])):
+            epoch_loss = []
+            if i>t_ini:                iModel.set_width_j(Annealing(t=i-t_ini, ini=width_init[n], fin=width_fin[n], t_fin=int(decay_epochs*iNEpochs[n])), j=n)
+            loss_value = 0
+            #for tmp in trainloader:
+                #batch_data,labels = tmp
+               #nplm_loss_value = NPLMLoss(labels,iModel.call_cumsum_j(batch_data, j=n))
+            optimizer.zero_grad()
+            nplm_loss_value = NPLMLoss(iTarget,iModel.call_cumsum_j(iData, j=n))
+            nplm_loss_value.backward()
+            optimizer.step()
+            iModel.clip_coeffs()
+            loss_value += nplm_loss_value.item()
+            if minloss > loss_value:
+                minloss=loss_value
+            if not (i%patience) and iPlot:
+                print('epoch: %i, NPLM loss: %f, COEFFS: %f'%(int(i+1), loss_value, loss_value-nplm_loss_value))
+                #continue
+                ####                                                                                                                                         
+                w_dat = iTarget[:, 1].detach().numpy()
+                ref_preds = iModel.call_cumsum_j(iData[iTarget[:, 0]==0], j=n)
+                dat = iData.detach().numpy()
+                centroids_history = iModel.get_centroids().detach().numpy()
+                m0=0
+                if n: m0=np.sum(iNCentroids[:n])
+                centroids_m_final = centroids_history[m0:m0+iNCentroids[n], :]#.detach().numpy()                                                        
+                for k in range(d):
+                    if k != d-1:
+                        continue
+                    if k<len(iData):
+                        centroids_m_final_k = centroids_m_final[:, k:k+1]
+                    else:
+                        centroids_m_final_k = []
+                    dat_k = dat[:, k:k+1]
+                    plot_reconstruction(data=dat_k[iTarget[:, 0]==1],
+                            weight_data=w_dat[iTarget[:, 0]==1],
+                            ref=dat_k[iTarget[:, 0]==0],
+                            weight_ref=w_dat[iTarget[:, 0]==0],
+                            ref_preds=[ref_preds.detach().numpy()],
+                            ref_preds_labels=['model'],
+                            centroids=centroids_m_final_k,
+                            t_obs=None, df=None,
+                            file_name='reco_dim%i_layer%i_epoch%i.pdf'%(k, n, i), save=True,
+                            save_path=output_folder,
+                            xlabels=[r'$x_{%i}$'%(k)], yrange={r'$x_{%i}$'%(k): [-1, 1]},
+                            bins=np.linspace(np.min(dat_k), np.max(dat_k)*1.1, 50))
+                    del centroids_m_final_k
+    return minloss
+
+
+def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip=100,iWidth_init=[15], iWidth_fin=[1], iNCentroids = [1]):
+    label_R = torch.zeros((len(iRef), 1),dtype=torch.float32)
+    label_D = torch.ones((len(iData), 1),dtype=torch.float32)
+    target  = torch.cat((label_D, label_R), axis=0)
+    weights = torch.cat((weights_D, weights_R), axis=0)
+    weights = weights.unsqueeze(-1)
+    target  = torch.cat((target, weights), axis=1)
+    print(iData.shape,iRef.shape)
+    feature = torch.cat((iData, iRef), axis=0)
+    #feature = feature.unsqueeze(-1)
+    
+    n_layers = len(iWidth_init)
+    widths_init,coeffs_init,centroids_init = initSparkKer(feature, n_layers,iNCentroids,iWidth_init=iWidth_init)
+    resolution_scale = np.array([0]).reshape((-1,))
+    resolution_const = np.array([0]).reshape((-1,))
+    resolution_scale=torch.from_numpy(resolution_scale).double()
+    resolution_const=torch.from_numpy(resolution_const).double()
+    model = Hierarchical(input_shape=(None, 1),
+                     centroids_list=centroids_init,
+                     widths_list=widths_init,
+                     coeffs_list=coeffs_init,
+                     resolution_const=resolution_const,
+                     resolution_scale=resolution_scale,
+                     coeffs_clip =iCoeffs_clip,
+                     train_widths=False,
+                     train_coeffs=True,
+                     train_centroids=True,
+                     positive_coeffs=False,
+                     model = 'Soft-SparKer2',
+                    )
+    minloss=train_sparkKer(model,feature,target,n_layers,iWidth_init,iWidth_fin,iNCentroids=iNCentroids)
+    #pred = model.call(feature)[-1, :]
+    #nplm_loss_final = NPLMLoss(target, pred)
+    #return -2*nplm_loss_final
+    return -2*minloss
+
 def dLL_old(iData, iRef, iRefLabel, sig_idx, iNSig, iNBkg, iNBins=100):
     #start with binned fit to be easy
     data_sort  = np.sort(iData.flatten().numpy())
@@ -807,18 +910,29 @@ def zemp(t1,t2,iPrint=False):
         print("zemp",Z_empirical,"+",Z_empirical_p,"-",Z_empirical_m,t_empirical,t_empirical_err)
     return Z_empirical
     
-def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1000,plot=True,iOption=0):
+def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,data_weights=None,model_weights=None,ntoys=1000,plot=True,iOption=0):
     t_sig = []
     t_ref = []
-    refs      = model       [model_labels != sig_idx]
-    refs_label= model_labels[model_labels != sig_idx]
+    refs      = model        [model_labels != sig_idx]
+    refs_label= model_labels [model_labels != sig_idx]
+    rweights  = model_weights[model_labels != sig_idx]
     srefs    = model       [model_labels == sig_idx]
     sigs     = data[labels == sig_idx]
     bkgs     = data[labels != sig_idx]
+    if model_weights is None:
+        model_weights = torch.ones(len(model_labels))
+    if data_weights is None:
+        data_weights = torch.ones(len(data_labels))
+    sweights  = data_weights[labels == sig_idx]
+    bweights  = data_weights[labels != sig_idx]
 
     ntotsig = len(sigs)
     ntotbkg = len(bkgs)
     ntotref = len(refs)
+    sweightcorr  = ntotsig/nsig
+    bweightcorr  = ntotbkg/nbkg
+    rweightcorr  = ntotref/nref
+    brweightcorr = ntotref/nbkg
     #ntotsrefs = len(srefs)
     z_emp=0
     nsigs   = np.random.poisson(lam=nsig, size=ntoys)
@@ -829,12 +943,16 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1
         sigidx  = np.random.choice(ntotsig, size=nsigs[pToy], replace=True)
         bkgidx  = np.random.choice(ntotbkg, size=nbkgs[pToy], replace=True)
         refidx  = np.random.choice(ntotref, size=nrefs[pToy], replace=True)
-        brfidx  = np.random.choice(ntotref, size=nbkgs[pToy], replace=True) #note to be accurate thsi should be ref, but statisically correct is bkg (its just cheating)
-        sig     = sigs[sigidx]
-        bkg     = bkgs[bkgidx]
+        brfidx  = np.random.choice(ntotref, size=nbrfs[pToy], replace=True) #note to be accurate thsi should be ref, but statisically correct is bkg (its just cheating)
+        #sig     = sigs[sigidx]
+        #bkg     = bkgs[bkgidx]
+        drf      = torch.cat((sigs[sigidx],    bkgs[bkgidx]))
+        dweight  = torch.cat((sweights[sigidx]*sweightcorr,bweights[bkgidx]*bweightcorr))
         ref     = refs[refidx]
+        rweight  = rweights[refidx]*rweightcorr
         #brf     = bkgs[brfidx] # in the long run we change this to ref
-        brf     = refs[brfidx] # in the long run we change this to ref
+        brf      = refs[brfidx] # in the long run we change this to ref
+        bweight  = rweights[brfidx]*brweightcorr
         ref_label=refs_label[refidx]
         #srf     = srfs[srfidx]
         #srf_label=torch.ones(srf.shape)*sig_idx
@@ -848,6 +966,10 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1
             #dist     = maxlikelihood(torch.cat((sig,bkg)),model,model_labels,sig_idx,nsig,nbkg)
             dist     = ksscore(torch.cat((sig,bkg)),ref,ref_label,sig_idx)
             ref_dist = ksscore(brf,ref,ref_label,sig_idx)
+        elif iOption == 2:
+            dist     = sparkKer(drf,ref,ref_label,-1,dweight,rweight)
+            ref_dist = sparkKer(brf,ref,ref_label,-1,bweight,rweight)
+            print("toy:",dist,ref_dist,"!")
         else:
             dist     = dLL(torch.cat((sig,bkg)),model,model_labels,sig_idx,nsig,nbkg)
             ref_dist = 0#dLL(brf                 ,model,model_labels,sig_idx,nsig,nbkg)
@@ -855,7 +977,7 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1
         t_sig.append(dist)
         t_ref.append(ref_dist)
         ts, tr = np.array(t_sig), np.array(t_ref)
-    if iOption == 0:
+    if iOption == 0 or iOption == 2:
         if plot:
             bins=np.linspace(np.min(tr)*0.8,np.max(tr)*1.2,20)
             x   = 0.5*(bins[1:]+bins[:-1])
@@ -889,11 +1011,11 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1
     #                   label1='REF', label2='DATA', save_name='', print_Zscore=True)
     #return z_as,z_emp
 
-def z_yield(data,labels,ref,ref_labels,iskip,iNb=1000,iNr=10000,iMin=0,iMax=300,iNbins=11,ntoys=1000,plot=True,iOption=0): #0 maha, 1 maxlikelihood (1D)
+def z_yield(data,labels,ref,ref_labels,iskip,data_weights=None,model_weights=None,iNb=1000,iNr=10000,iMin=0,iMax=300,iNbins=11,ntoys=1000,plot=True,iOption=0): #0 maha, 1 maxlikelihood (1D)
     sig_yield = np.linspace(iMin,iMax,iNbins) 
     z_as=[]; z_emp=[]
     for pYield in sig_yield: 
-        pZ_as,pZ_emp = run_toy(pYield, iNb, iNr,data,labels,ref,ref_labels,iskip,ntoys=ntoys,plot=False,iOption=iOption)
+        pZ_as,pZ_emp = run_toy(pYield, iNb, iNr,data,labels,ref,ref_labels,iskip,ntoys=ntoys, weights=weights,plot=False,iOption=iOption)
         z_as.append(pZ_as)
         z_emp.append(pZ_emp)
 

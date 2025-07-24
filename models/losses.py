@@ -135,3 +135,9 @@ class MMDLoss(nn.Module):
         if iPrint:
             print("XX:",XX,"XY:",XY,"YY:",YY,"X:",X,"Y:",Y,)
         return (XX - 2 * XY + YY)/(XX + YY + 1e-8)
+
+def NPLMLoss(true, pred):
+    f   = pred[:, 0]
+    y   = true[:, 0]
+    w   = true[:, 1]
+    return torch.sum((1-y)*w*(torch.exp(f)-1) - y*w*(f))
