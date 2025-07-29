@@ -33,8 +33,8 @@ def savetoys(iLabel,iSkip,iNToys,mc_out,da_out,mc_lab,da_lab,da_weights,mc_weigh
     else:
         data_dict={}
 
-    nsig=2000
-    nbkg=5000
+    nsig=5000
+    nbkg=10000
     nref=40000
     ts,tb=dutils.run_toy(nsig, nbkg, nref,da_out,da_lab,mc_out,mc_lab,iSkip,data_weights=da_weights,model_weights=mc_weights,ntoys=iNToys,plot=False,iOption=iOption)
     data_dict["toy_sig"]  = ts

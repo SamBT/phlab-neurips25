@@ -751,6 +751,7 @@ def plotSparkScore(iModel,iFeature,iTarget,n,iMass=None):
     plt.xlabel("Mass(GeV)", fontsize=22, fontname='serif')
     plt.show()
     plt.close()
+    #return
 
     fig = plt.figure(figsize=(9,6))
     fig.patch.set_facecolor('white')
@@ -773,7 +774,7 @@ def initSparkKer(iFeature, n_layers, M, iWidth_init=[10], d=1):
     widths_init = [torch.from_numpy(widths_init[i]).double() for i in range(n_layers)]
     return widths_init,coeffs_init,centroids_init
 
-def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroids = [1],t_ini=0,decay_epochs=0.9,lr=0.01,iNEpochs=[501],patience=100,iPlot=True,iMass=None):
+def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroids = [1],t_ini=0,decay_epochs=0.9,lr=0.01,iNEpochs=[1001],patience=500,iPlot=True,iMass=None):
     d=iData.shape[1]
     output_folder='tmp/'
     minloss=100
@@ -833,7 +834,7 @@ def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroid
                     del centroids_m_final_k
     return minloss
 
-def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip=100,iWidth_init=[0.5], iWidth_fin=[0.5], iNCentroids = [20],plot=True,splitmass=True):
+def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip=100,iWidth_init=[4.], iWidth_fin=[4.], iNCentroids = [10],plot=True,splitmass=True):
     label_R = torch.zeros((len(iRef), 1),dtype=torch.float32)
     label_D = torch.ones((len(iData), 1),dtype=torch.float32)
     target  = torch.cat((label_D, label_R), axis=0)
@@ -847,6 +848,10 @@ def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip
         feature = feature[:, :-1]
         
     n_layers = len(iWidth_init)
+    cuda = True 
+    DEVICE = torch.device("cuda" if cuda else "cpu")
+    #feature=feature.to(DEVICE)
+    #target=target.to(DEVICE)
     widths_init,coeffs_init,centroids_init = initSparkKer(feature, n_layers,iNCentroids,iWidth_init=iWidth_init)
     resolution_scale = np.array([0]).reshape((-1,))
     resolution_const = np.array([0]).reshape((-1,))
@@ -864,8 +869,7 @@ def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip
                      train_centroids=False,
                      positive_coeffs=False,
                      model = 'Soft-SparKer2',
-                    )
-
+                    ).to(DEVICE)
     minloss=train_sparkKer(model,feature,target,n_layers,iWidth_init,iWidth_fin,iNCentroids=iNCentroids,iPlot=plot,iMass=lMass)
     #pred = model.call(feature)[-1, :]
     #nplm_loss_final = NPLMLoss(target, pred)
@@ -975,7 +979,7 @@ def zemp(t1,t2,iPrint=False):
         print("zemp",Z_empirical,"+",Z_empirical_p,"-",Z_empirical_m,t_empirical,t_empirical_err)
     return Z_empirical
     
-def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,data_weights=None,model_weights=None,ntoys=1000,plot=True,iOption=0):
+def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,data_weights=None,model_weights=None,ntoys=1000,plot=True,iOption=0,splitmass=True):
     t_sig = []
     t_ref = []
     refs      = model        [model_labels != sig_idx]
@@ -1033,8 +1037,8 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,data_we
             ref_dist = ksscore(brf,ref,ref_label,sig_idx)
         elif iOption == 2:
             #sparkKer(data_space, mc_space, mc_labels, -1, d_weights, mc_weights)
-            dist     = sparkKer(drf.detach(),ref.detach(),ref_label,-1,dweight.detach(),rweight.detach(),plot=plot)
-            ref_dist = sparkKer(brf.detach(),ref.detach(),ref_label,-1,bweight.detach(),rweight.detach(),plot=plot)
+            dist     = sparkKer(drf.detach(),ref.detach(),ref_label,-1,dweight.detach(),rweight.detach(),plot=plot,splitmass=splitmass)
+            ref_dist = sparkKer(brf.detach(),ref.detach(),ref_label,-1,bweight.detach(),rweight.detach(),plot=plot,splitmass=splitmass)
             print("toy:",dist,ref_dist,"!")
         else:
             dist     = dLL(torch.cat((sig,bkg)),model,model_labels,sig_idx,nsig,nbkg)
