@@ -703,6 +703,68 @@ def dLL(iData, iRef, iRefLabel, sig_idx, iNSig, iNBkg, iNBins=100):
     return zscore
 
 
+def plotSparkScore(iModel,iFeature,iTarget,n,iMass=None):
+    fig = plt.figure(figsize=(9,6))
+    fig.patch.set_facecolor('white')
+    ax= fig.add_axes([0.15, 0.1, 0.78, 0.8])
+
+    #discriminator
+    pred_norm = torch.sigmoid(iModel.call_cumsum_j(iFeature, j=n)[:, 0]).detach().numpy()
+    weights   = iTarget[:, 1].detach().numpy()
+
+    data      = pred_norm[iTarget[:, 0]==1]
+    d_weights = weights[iTarget[:, 0]==1]
+
+    mc        = pred_norm[iTarget[:, 0]==0]
+    mc_weights = weights[iTarget[:, 0]==0]
+    
+    mc_hist, bins = np.histogram(mc,   bins=20,  weights=mc_weights)
+    da_hist, bins = np.histogram(data, bins=bins,weights=d_weights)
+    
+    plt.stairs(mc_hist,bins, color='green',alpha=0.5, ec='green', lw=1, label='mc', zorder=1,fill=True)
+    plt.errorbar(0.5*(bins[1:]+bins[:-1]), da_hist, yerr= np.sqrt(da_hist), color='black', ls='', marker='o', ms=5, zorder=3)
+    plt.ylabel("events", fontsize=22, fontname='serif')
+    plt.xlabel("classifier output", fontsize=22, fontname='serif')
+    plt.show()
+    plt.close()
+    if iMass == None:
+        return
+
+    m_data      = iMass[iTarget[:, 0]==1].detach().numpy()
+    m_mc        = iMass[iTarget[:, 0]==0].detach().numpy()
+    k = max(1, int(np.ceil(0.15 * len(data))))
+    pred_top = np.sort(data)[-k]
+
+    d_sel_mass = m_data[data > pred_top]
+    m_sel_mass = m_mc  [mc   > pred_top]
+    d_sel_weights = d_weights [data > pred_top]
+    m_sel_weights = mc_weights[mc   > pred_top]
+
+    fig = plt.figure(figsize=(9,6))
+    fig.patch.set_facecolor('white')
+    ax= fig.add_axes([0.15, 0.1, 0.78, 0.8])
+    mc_hist, bins = np.histogram(m_sel_mass, bins=20,  weights=m_sel_weights)
+    da_hist, bins = np.histogram(d_sel_mass, bins=bins,weights=d_sel_weights)    
+    plt.stairs(mc_hist,bins, color='green',alpha=0.5, ec='green', lw=1, label='mc', zorder=1,fill=True)
+    plt.errorbar(0.5*(bins[1:]+bins[:-1]), da_hist, yerr= np.sqrt(da_hist), color='black', ls='', marker='o', ms=5, zorder=3)
+    plt.ylabel("events", fontsize=22, fontname='serif')
+    plt.xlabel("Mass(GeV)", fontsize=22, fontname='serif')
+    plt.show()
+    plt.close()
+
+    fig = plt.figure(figsize=(9,6))
+    fig.patch.set_facecolor('white')
+    ax= fig.add_axes([0.15, 0.1, 0.78, 0.8])
+    mc_hist, bins = np.histogram(m_mc, bins=20,  weights=mc_weights*mc)
+    da_hist, bins = np.histogram(m_data, bins=bins,weights=d_weights*data)    
+    plt.stairs(mc_hist,bins, color='green',alpha=0.5, ec='green', lw=1, label='mc', zorder=1,fill=True)
+    plt.errorbar(0.5*(bins[1:]+bins[:-1]), da_hist, yerr= np.sqrt(da_hist), color='black', ls='', marker='o', ms=5, zorder=3)
+    plt.ylabel("events", fontsize=22, fontname='serif')
+    plt.xlabel("Mass(GeV)", fontsize=22, fontname='serif')
+    plt.show()
+    plt.close()
+
+    
 def initSparkKer(iFeature, n_layers, M, iWidth_init=[10], d=1):
     widths_init    = [np.ones((M[i], d))*iWidth_init[i] for i in range(n_layers)] 
     coeffs_init    = [(np.random.binomial(p=0.5, n=1, size=(M[i], 1))*2-1)*[0] for i in range(n_layers)]
@@ -711,7 +773,7 @@ def initSparkKer(iFeature, n_layers, M, iWidth_init=[10], d=1):
     widths_init = [torch.from_numpy(widths_init[i]).double() for i in range(n_layers)]
     return widths_init,coeffs_init,centroids_init
 
-def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroids = [1],t_ini=0,decay_epochs=0.9,lr=0.01,iNEpochs=[10001],patience=1000,iPlot=True):
+def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroids = [1],t_ini=0,decay_epochs=0.9,lr=0.01,iNEpochs=[501],patience=100,iPlot=True,iMass=None):
     d=iData.shape[1]
     output_folder='tmp/'
     minloss=100
@@ -723,7 +785,7 @@ def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroid
         optimizer = torch.optim.Adam(iModel.parameters(n), lr=lr)
         for i in range(int(iNEpochs[n])):
             epoch_loss = []
-            if i>t_ini:                iModel.set_width_j(Annealing(t=i-t_ini, ini=width_init[n], fin=width_fin[n], t_fin=int(decay_epochs*iNEpochs[n])), j=n)
+            #if i>t_ini:                iModel.set_width_j(Annealing(t=i-t_ini, ini=width_init[n], fin=width_fin[n], t_fin=int(decay_epochs*iNEpochs[n])), j=n)
             loss_value = 0
             #for tmp in trainloader:
                 #batch_data,labels = tmp
@@ -739,6 +801,7 @@ def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroid
             if not (i%patience) and iPlot:
                 print('epoch: %i, NPLM loss: %f, COEFFS: %f'%(int(i+1), loss_value, loss_value-nplm_loss_value))
                 #continue
+                plotSparkScore(iModel,iData,iTarget,n,iMass)
                 ####                                                                                                                                         
                 w_dat = iTarget[:, 1].detach().numpy()
                 ref_preds = iModel.call_cumsum_j(iData[iTarget[:, 0]==0], j=n)
@@ -770,18 +833,19 @@ def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroid
                     del centroids_m_final_k
     return minloss
 
-
-def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip=100,iWidth_init=[15], iWidth_fin=[1], iNCentroids = [1]):
+def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip=100,iWidth_init=[0.5], iWidth_fin=[0.5], iNCentroids = [20],plot=True,splitmass=True):
     label_R = torch.zeros((len(iRef), 1),dtype=torch.float32)
     label_D = torch.ones((len(iData), 1),dtype=torch.float32)
     target  = torch.cat((label_D, label_R), axis=0)
     weights = torch.cat((weights_D, weights_R), axis=0)
     weights = weights.unsqueeze(-1)
     target  = torch.cat((target, weights), axis=1)
-    print(iData.shape,iRef.shape)
     feature = torch.cat((iData, iRef), axis=0)
     #feature = feature.unsqueeze(-1)
-    
+    lMass     = feature[:,-1]
+    if splitmass:
+        feature = feature[:, :-1]
+        
     n_layers = len(iWidth_init)
     widths_init,coeffs_init,centroids_init = initSparkKer(feature, n_layers,iNCentroids,iWidth_init=iWidth_init)
     resolution_scale = np.array([0]).reshape((-1,))
@@ -797,11 +861,12 @@ def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip
                      coeffs_clip =iCoeffs_clip,
                      train_widths=False,
                      train_coeffs=True,
-                     train_centroids=True,
+                     train_centroids=False,
                      positive_coeffs=False,
                      model = 'Soft-SparKer2',
                     )
-    minloss=train_sparkKer(model,feature,target,n_layers,iWidth_init,iWidth_fin,iNCentroids=iNCentroids)
+
+    minloss=train_sparkKer(model,feature,target,n_layers,iWidth_init,iWidth_fin,iNCentroids=iNCentroids,iPlot=plot,iMass=lMass)
     #pred = model.call(feature)[-1, :]
     #nplm_loss_final = NPLMLoss(target, pred)
     #return -2*nplm_loss_final
@@ -967,8 +1032,9 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,data_we
             dist     = ksscore(torch.cat((sig,bkg)),ref,ref_label,sig_idx)
             ref_dist = ksscore(brf,ref,ref_label,sig_idx)
         elif iOption == 2:
-            dist     = sparkKer(drf,ref,ref_label,-1,dweight,rweight)
-            ref_dist = sparkKer(brf,ref,ref_label,-1,bweight,rweight)
+            #sparkKer(data_space, mc_space, mc_labels, -1, d_weights, mc_weights)
+            dist     = sparkKer(drf.detach(),ref.detach(),ref_label,-1,dweight.detach(),rweight.detach(),plot=plot)
+            ref_dist = sparkKer(brf.detach(),ref.detach(),ref_label,-1,bweight.detach(),rweight.detach(),plot=plot)
             print("toy:",dist,ref_dist,"!")
         else:
             dist     = dLL(torch.cat((sig,bkg)),model,model_labels,sig_idx,nsig,nbkg)
@@ -1005,7 +1071,10 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,data_we
         z_emp = np.median(ts[0 < ts])#zemp(ts,tr,plot)
         z_as  = np.median(ts[0 < ts])
         #print("z_emp",z_emp,"z_as",z_as)
-    return z_as,z_emp
+    if iOption != 2:
+        return z_as,z_emp
+    else:
+        return ts,tr
     #z_as, z_emp = plot_2distribution_new(ts, tr, df=np.median(ts), xmin=np.min(tr)-1, xmax=np.max(tr)+1, #ymax=0.03, 
     #                   nbins=8, save=False, output_path='./', Z_print=[1.645,2.33],
     #                   label1='REF', label2='DATA', save_name='', print_Zscore=True)
