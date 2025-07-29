@@ -978,7 +978,69 @@ def zemp(t1,t2,iPrint=False):
     if iPrint:
         print("zemp",Z_empirical,"+",Z_empirical_p,"-",Z_empirical_m,t_empirical,t_empirical_err)
     return Z_empirical
+
+def rebalance(iSample,iWeight,iMaxWeight):
+    rands=torch.rand_like(iWeight)
+    rand_sel=rands < iWeight/iMaxWeight
+    return iSample[rand_sel]
+
+
+def run_realistic_toy( nref, data, labels, model, model_labels,sig_idx,data_weights=None,model_weights=None,ntoys=1000,plot=True,splitmass=True):
+    #split data
+    refs      = model        [model_labels != sig_idx]
+    refs_label= model_labels [model_labels != sig_idx]
+    rweights  = model_weights[model_labels != sig_idx]
+    srefs    = model       [model_labels == sig_idx]
+    sigs     = data[labels == sig_idx]
+    bkgs     = data[labels != sig_idx]
+    if model_weights is None:
+        model_weights = torch.ones(len(model_labels))
+    if data_weights is None:
+        data_weights = torch.ones(len(data_labels))
+    sweights  = data_weights[labels == sig_idx]
+    bweights  = data_weights[labels != sig_idx]
+
+    #Make it realistic
+    nsig = torch.sum(sweights)
+    nbkg = torch.sum(bweights)
+    sigs=rebalance(sigs,sweights,torch.max(sweights))
+    bkgs=rebalance(bkgs,bweights,torch.max(bweights))
     
+    t_sig = []
+    t_ref = []
+    
+    ntotsig = len(sigs)
+    ntotbkg = len(bkgs)
+    ntotref = len(refs)
+    rweightcorr  = ntotref/nref
+    nsigs   = np.random.poisson(lam=nsig, size=ntoys)
+    nbkgs   = np.random.poisson(lam=nbkg, size=ntoys)
+    nrefs   = np.random.poisson(lam=nref, size=ntoys)
+    nbrfs   = np.random.poisson(lam=nbkg, size=ntoys)
+    for pToy in range(ntoys):
+        sigidx  = np.random.choice(ntotsig, size=nsigs[pToy], replace=True)
+        bkgidx  = np.random.choice(ntotbkg, size=nbkgs[pToy], replace=True)
+        refidx  = np.random.choice(ntotref, size=nrefs[pToy], replace=True)
+        brfidx  = np.random.choice(ntotbkg, size=nbrfs[pToy], replace=True) #note to be accurate thsi should be ref, but statisically correct is bkg (its just cheating)
+        drf      = torch.cat((sigs[sigidx],    bkgs[bkgidx]))
+        dweight  = torch.ones(drf.shape[0])
+
+        ref     = refs[refidx]
+        rweight  = rweights[refidx]*rweightcorr
+
+        brf      = bkgs[brfidx] # in the long run we change this to ref
+        bweight  = torch.ones(brf.shape[0])#rweights[brfidx]*brweightcorr
+
+        ref_label=refs_label[refidx]
+        dist     = sparkKer(drf.detach(),ref.detach(),ref_label,-1,dweight.detach(),rweight.detach(),plot=plot,splitmass=splitmass)
+        ref_dist = sparkKer(brf.detach(),ref.detach(),ref_label,-1,bweight.detach(),rweight.detach(),plot=plot,splitmass=splitmass)
+            
+        t_sig.append(dist)
+        t_ref.append(ref_dist)
+    ts, tr = np.array(t_sig), np.array(t_ref)
+    return ts,tr
+
+
 def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,data_weights=None,model_weights=None,ntoys=1000,plot=True,iOption=0,splitmass=True):
     t_sig = []
     t_ref = []
@@ -1016,12 +1078,13 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,data_we
         #sig     = sigs[sigidx]
         #bkg     = bkgs[bkgidx]
         drf      = torch.cat((sigs[sigidx],    bkgs[bkgidx]))
-        dweight  = torch.cat((sweights[sigidx]*sweightcorr,bweights[bkgidx]*bweightcorr))
+        dweight  = torch.ones(drf.shape[0])
+        #dweight  = torch.cat((sweights[sigidx]*sweightcorr,bweights[bkgidx]*bweightcorr))        
         ref     = refs[refidx]
         rweight  = rweights[refidx]*rweightcorr
         #brf     = bkgs[brfidx] # in the long run we change this to ref
         brf      = refs[brfidx] # in the long run we change this to ref
-        bweight  = rweights[brfidx]*brweightcorr
+        bweight  = torch.ones(brf.shape[0])#rweights[brfidx]*brweightcorr
         ref_label=refs_label[refidx]
         #srf     = srfs[srfidx]
         #srf_label=torch.ones(srf.shape)*sig_idx
