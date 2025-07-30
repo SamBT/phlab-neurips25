@@ -702,6 +702,41 @@ def dLL(iData, iRef, iRefLabel, sig_idx, iNSig, iNBkg, iNBins=100):
     zscore = norm.ppf(chi2.cdf(dLL,1))
     return zscore
 
+def dLL_4lm(iData, iRef, iWRef, iSRef, iSWRef, iNBins=20):
+    bins = np.linspace(60,200,iNBins+1)
+    data,bin_edges = np.histogram(iData,bins=bins)
+    ref_data,_  = np.histogram(iRef,weights=iWRef.unsqueeze(1),bins=bins)
+    sig_data,_  = np.histogram(iSRef,weights=iSWRef.unsqueeze(1),bins=bins)
+
+    x = (bins[:-1]+bins[1:])/2
+    # fit splines to sig and bkg shape
+    bkg_spline                = interpolate.splrep(x, ref_data)
+    sig_spline                = interpolate.splrep(x, sig_data)
+    
+    def bkg_only_spline(x,a2):
+        bkg = interpolate.splev(x, bkg_spline)*a2
+        return bkg
+    def sig_plus_bkg_spline(x,a1,a2):
+        sig = interpolate.splev(x, sig_spline)*a1
+        bkg = interpolate.splev(x, bkg_spline)*a2
+        return sig+bkg
+    
+    #b_model             = lmfit.Model(bkg_only_spline)
+    b_model = lmfit.Model(bkg_only_spline)
+    params_b = b_model.make_params(a2=1.)
+    
+    #sb_model             = lmfit.Model(sig_plus_bkg_spline)
+    sb_model = lmfit.Model(sig_plus_bkg_spline)
+    params_sb = sb_model.make_params(a1=1.,a2=1.)
+    
+    weights = 1./np.sqrt(np.maximum(data,0.1))
+    result_sb = sb_model.fit(data=data,params=params_sb,weights=weights,x=x)
+    result_b  = b_model.fit(data=data,params=params_b,weights=weights,x=x)
+
+    dLL = result_b.chisqr - result_sb.chisqr
+    zscore = norm.ppf(chi2.cdf(dLL,1))
+    return zscore
+
 
 def plotSparkScore(iModel,iFeature,iTarget,n,iMass=None):
     fig = plt.figure(figsize=(9,6))
@@ -751,7 +786,7 @@ def plotSparkScore(iModel,iFeature,iTarget,n,iMass=None):
     plt.xlabel("Mass(GeV)", fontsize=22, fontname='serif')
     plt.show()
     plt.close()
-    #return
+    return
 
     fig = plt.figure(figsize=(9,6))
     fig.patch.set_facecolor('white')
@@ -774,7 +809,7 @@ def initSparkKer(iFeature, n_layers, M, iWidth_init=[10], d=1):
     widths_init = [torch.from_numpy(widths_init[i]).double() for i in range(n_layers)]
     return widths_init,coeffs_init,centroids_init
 
-def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroids = [1],t_ini=0,decay_epochs=0.9,lr=0.01,iNEpochs=[1001],patience=500,iPlot=True,iMass=None):
+def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroids = [1],t_ini=0,decay_epochs=0.9,lr=0.01,iNEpochs=[1001],patience=1000,iPlot=True,iMass=None):
     d=iData.shape[1]
     output_folder='tmp/'
     minloss=100
@@ -802,7 +837,8 @@ def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroid
             if not (i%patience) and iPlot:
                 print('epoch: %i, NPLM loss: %f, COEFFS: %f'%(int(i+1), loss_value, loss_value-nplm_loss_value))
                 #continue
-                plotSparkScore(iModel,iData,iTarget,n,iMass)
+                if i > 0:
+                    plotSparkScore(iModel,iData,iTarget,n,iMass)
                 ####                                                                                                                                         
                 w_dat = iTarget[:, 1].detach().numpy()
                 ref_preds = iModel.call_cumsum_j(iData[iTarget[:, 0]==0], j=n)
@@ -834,7 +870,7 @@ def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroid
                     del centroids_m_final_k
     return minloss
 
-def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip=100,iWidth_init=[4.], iWidth_fin=[4.], iNCentroids = [10],plot=True,splitmass=True):
+def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip=100,iWidth_init=[0.5], iWidth_fin=[0.5], iNCentroids = [20],plot=True,splitmass=True):
     label_R = torch.zeros((len(iRef), 1),dtype=torch.float32)
     label_D = torch.ones((len(iData), 1),dtype=torch.float32)
     target  = torch.cat((label_D, label_R), axis=0)
@@ -985,12 +1021,13 @@ def rebalance(iSample,iWeight,iMaxWeight):
     return iSample[rand_sel]
 
 
-def run_realistic_toy( nref, data, labels, model, model_labels,sig_idx,data_weights=None,model_weights=None,ntoys=1000,plot=True,splitmass=True):
+def run_realistic_toy( nref, data, labels, model, model_labels,sig_idx,data_weights=None,model_weights=None,ntoys=1000,plot=True,splitmass=True,width=0.5,iOption=2):
     #split data
     refs      = model        [model_labels != sig_idx]
     refs_label= model_labels [model_labels != sig_idx]
     rweights  = model_weights[model_labels != sig_idx]
-    srefs    = model       [model_labels == sig_idx]
+    srefs     = model        [model_labels == sig_idx]
+    srweights = model_weights[model_labels == sig_idx]
     sigs     = data[labels == sig_idx]
     bkgs     = data[labels != sig_idx]
     if model_weights is None:
@@ -1003,6 +1040,7 @@ def run_realistic_toy( nref, data, labels, model, model_labels,sig_idx,data_weig
     #Make it realistic
     nsig = torch.sum(sweights)
     nbkg = torch.sum(bweights)
+    print("nsig",nsig,"nbkg",nbkg)
     sigs=rebalance(sigs,sweights,torch.max(sweights))
     bkgs=rebalance(bkgs,bweights,torch.max(bweights))
     
@@ -1032,9 +1070,14 @@ def run_realistic_toy( nref, data, labels, model, model_labels,sig_idx,data_weig
         bweight  = torch.ones(brf.shape[0])#rweights[brfidx]*brweightcorr
 
         ref_label=refs_label[refidx]
-        dist     = sparkKer(drf.detach(),ref.detach(),ref_label,-1,dweight.detach(),rweight.detach(),plot=plot,splitmass=splitmass)
-        ref_dist = sparkKer(brf.detach(),ref.detach(),ref_label,-1,bweight.detach(),rweight.detach(),plot=plot,splitmass=splitmass)
+        if iOption != 3:
+            dist     = sparkKer(drf.detach(),ref.detach(),ref_label,-1,dweight.detach(),rweight.detach(),plot=plot,splitmass=splitmass,iWidth_init=[width])
+            ref_dist = sparkKer(brf.detach(),ref.detach(),ref_label,-1,bweight.detach(),rweight.detach(),plot=plot,splitmass=splitmass,iWidth_init=[width])
+        else:
+            dist     = dLL_4lm(drf.detach(),ref.detach(),rweight.detach(),srefs.detach(),srweights.detach())
+            ref_dist = dLL_4lm(brf.detach(),ref.detach(),rweight.detach(),srefs.detach(),srweights.detach())
             
+        print("toy:",dist,ref_dist,"!")
         t_sig.append(dist)
         t_ref.append(ref_dist)
     ts, tr = np.array(t_sig), np.array(t_ref)
