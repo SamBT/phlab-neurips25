@@ -163,9 +163,8 @@ def maxlikelihood(iData, iRef, iRefLabel, sig_idx, iNSig, iNBkg, iNBins=100):
             print(pexpsig,pcen,"!",pval)
         sigarr.append(ptotsig)
         expsigarr.append(pexpsig)
-    print("sigarr",sigarr,"exp",expsigarr)
-    print("val",np.max(sigarr),np.max(expsigarr), sigarr[np.argmax(expsigarr)])
-    a
+    #print("sigarr",sigarr,"exp",expsigarr)
+    #print("val",np.max(sigarr),np.max(expsigarr), sigarr[np.argmax(expsigarr)])
     return sigarr[np.argmax(expsigarr)]
     #low stats version
     #sig=np.sqrt(2 * ((s + b) * np.log(1 + s / b) - s))
@@ -744,14 +743,17 @@ def plotSparkScore(iModel,iFeature,iTarget,n,iMass=None):
     ax= fig.add_axes([0.15, 0.1, 0.78, 0.8])
 
     #discriminator
-    pred_norm = torch.sigmoid(iModel.call_cumsum_j(iFeature, j=n)[:, 0]).detach().numpy()
-    weights   = iTarget[:, 1].detach().numpy()
+    print(iFeature,iTarget,"!!!")
+    lTarget = iTarget.to('cpu')
+    pred_norm = torch.sigmoid(iModel.call_cumsum_j(iFeature, j=n)[:, 0])
+    pred_norm = pred_norm.to('cpu').detach().numpy()
+    weights   = iTarget[:, 1].to('cpu').detach().numpy()
 
-    data      = pred_norm[iTarget[:, 0]==1]
-    d_weights = weights[iTarget[:, 0]==1]
+    data      = pred_norm[lTarget[:, 0]==1]
+    d_weights = weights[lTarget[:, 0]==1]
 
-    mc        = pred_norm[iTarget[:, 0]==0]
-    mc_weights = weights[iTarget[:, 0]==0]
+    mc        = pred_norm[lTarget[:, 0]==0]
+    mc_weights = weights[lTarget[:, 0]==0]
     
     mc_hist, bins = np.histogram(mc,   bins=20,  weights=mc_weights)
     da_hist, bins = np.histogram(data, bins=bins,weights=d_weights)
@@ -765,8 +767,8 @@ def plotSparkScore(iModel,iFeature,iTarget,n,iMass=None):
     if iMass == None:
         return
 
-    m_data      = iMass[iTarget[:, 0]==1].detach().numpy()
-    m_mc        = iMass[iTarget[:, 0]==0].detach().numpy()
+    m_data      = iMass[iTarget[:, 0]==1].to("cpu").detach().numpy()
+    m_mc        = iMass[iTarget[:, 0]==0].to("cpu").detach().numpy()
     k = max(1, int(np.ceil(0.15 * len(data))))
     pred_top = np.sort(data)[-k]
 
@@ -786,8 +788,38 @@ def plotSparkScore(iModel,iFeature,iTarget,n,iMass=None):
     plt.xlabel("Mass(GeV)", fontsize=22, fontname='serif')
     plt.show()
     plt.close()
-    return
 
+    # Create the contourf background
+    fig = plt.figure(figsize=(8, 6))
+    fig.patch.set_facecolor('white')
+    # Compute the 2D histogram
+    hist, xedges, yedges = np.histogram2d(m_mc, mc, bins=10, weights=mc_weights, density=True)
+    plt.figure(figsize=(8, 6))
+    X, Y = np.meshgrid(xedges[:-1], yedges[:-1])
+    plt.contourf(X, Y, hist.T, levels=50, cmap='plasma')
+    plt.colorbar(label='Event Density')
+    plt.scatter(m_data, data, c='red', edgecolors='white', s=80,label='data')
+    fig.patch.set_facecolor('white')
+    
+    # Make it look nice
+    plt.xlabel('Mass(GeV)',fontsize=22, fontname='serif')
+    plt.ylabel('Anomaly Score',fontsize=22, fontname='serif')
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+    plt.close()
+
+    data_dict = {}
+    data_dict["s_mc"]   = mc
+    data_dict["m_mc"]   = m_mc
+    data_dict["w_mc"]   = mc_weights
+    
+    data_dict["s_da"]   = data
+    data_dict["m_da"]   = m_data
+    np.savez("plot_vals.npz", **data_dict)
+    return
+    
     fig = plt.figure(figsize=(9,6))
     fig.patch.set_facecolor('white')
     ax= fig.add_axes([0.15, 0.1, 0.78, 0.8])
@@ -809,7 +841,7 @@ def initSparkKer(iFeature, n_layers, M, iWidth_init=[10], d=1):
     widths_init = [torch.from_numpy(widths_init[i]).double() for i in range(n_layers)]
     return widths_init,coeffs_init,centroids_init
 
-def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroids = [1],t_ini=0,decay_epochs=0.9,lr=0.01,iNEpochs=[1001],patience=1000,iPlot=True,iMass=None):
+def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroids = [1],t_ini=0,decay_epochs=0.9,lr=0.01,iNEpochs=[1001],patience=2000,iPlot=True,iMass=None):
     d=iData.shape[1]
     output_folder='tmp/'
     minloss=100
@@ -837,16 +869,16 @@ def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroid
             if not (i%patience) and iPlot:
                 print('epoch: %i, NPLM loss: %f, COEFFS: %f'%(int(i+1), loss_value, loss_value-nplm_loss_value))
                 #continue
-                if i > 0:
+                if i > -1:
                     plotSparkScore(iModel,iData,iTarget,n,iMass)
                 ####                                                                                                                                         
-                w_dat = iTarget[:, 1].detach().numpy()
+                w_dat = iTarget[:, 1].to('cpu').detach().numpy()
                 ref_preds = iModel.call_cumsum_j(iData[iTarget[:, 0]==0], j=n)
-                dat = iData.detach().numpy()
-                centroids_history = iModel.get_centroids().detach().numpy()
+                dat = iData.to('cpu').detach().numpy()
+                centroids_history = iModel.get_centroids().to('cpu').detach().numpy()
                 m0=0
                 if n: m0=np.sum(iNCentroids[:n])
-                centroids_m_final = centroids_history[m0:m0+iNCentroids[n], :]#.detach().numpy()                                                        
+                centroids_m_final = centroids_history[m0:m0+iNCentroids[n], :]
                 for k in range(d):
                     if k != d-1:
                         continue
@@ -859,7 +891,7 @@ def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroid
                             weight_data=w_dat[iTarget[:, 0]==1],
                             ref=dat_k[iTarget[:, 0]==0],
                             weight_ref=w_dat[iTarget[:, 0]==0],
-                            ref_preds=[ref_preds.detach().numpy()],
+                            ref_preds=[ref_preds.to('cpu').detach().numpy()],
                             ref_preds_labels=['model'],
                             centroids=centroids_m_final_k,
                             t_obs=None, df=None,
@@ -870,10 +902,12 @@ def train_sparkKer(iModel,iData,iTarget,n_layers,width_init,width_fin,iNCentroid
                     del centroids_m_final_k
     return minloss
 
-def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip=100,iWidth_init=[0.5], iWidth_fin=[0.5], iNCentroids = [20],plot=True,splitmass=True):
+#def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip=100,iWidth_init=[0.5], iWidth_fin=[0.5], iNCentroids = [30],plot=True,splitmass=True):
+def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip=100,iWidth_init=[0.5], iWidth_fin=[0.5], iNCentroids = [30],plot=True,splitmass=True):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     label_R = torch.zeros((len(iRef), 1),dtype=torch.float32)
     label_D = torch.ones((len(iData), 1),dtype=torch.float32)
-    target  = torch.cat((label_D, label_R), axis=0)
+    target  = torch.cat((label_D, label_R), axis=0)#.to(device)
     weights = torch.cat((weights_D, weights_R), axis=0)
     weights = weights.unsqueeze(-1)
     target  = torch.cat((target, weights), axis=1)
@@ -884,8 +918,6 @@ def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip
         feature = feature[:, :-1]
         
     n_layers = len(iWidth_init)
-    cuda = True 
-    DEVICE = torch.device("cuda" if cuda else "cpu")
     #feature=feature.to(DEVICE)
     #target=target.to(DEVICE)
     widths_init,coeffs_init,centroids_init = initSparkKer(feature, n_layers,iNCentroids,iWidth_init=iWidth_init)
@@ -902,10 +934,10 @@ def sparkKer(iData, iRef, iRefLabel, sig_idx, weights_D, weights_R, iCoeffs_clip
                      coeffs_clip =iCoeffs_clip,
                      train_widths=False,
                      train_coeffs=True,
-                     train_centroids=False,
+                     train_centroids=True,
                      positive_coeffs=False,
                      model = 'Soft-SparKer2',
-                    ).to(DEVICE)
+                    )#.to(device)
     minloss=train_sparkKer(model,feature,target,n_layers,iWidth_init,iWidth_fin,iNCentroids=iNCentroids,iPlot=plot,iMass=lMass)
     #pred = model.call(feature)[-1, :]
     #nplm_loss_final = NPLMLoss(target, pred)
@@ -1023,6 +1055,7 @@ def rebalance(iSample,iWeight,iMaxWeight):
 
 def run_realistic_toy( nref, data, labels, model, model_labels,sig_idx,data_weights=None,model_weights=None,ntoys=1000,plot=True,splitmass=True,width=0.5,iOption=2):
     #split data
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     refs      = model        [model_labels != sig_idx]
     refs_label= model_labels [model_labels != sig_idx]
     rweights  = model_weights[model_labels != sig_idx]
@@ -1071,6 +1104,13 @@ def run_realistic_toy( nref, data, labels, model, model_labels,sig_idx,data_weig
 
         ref_label=refs_label[refidx]
         if iOption != 3:
+            #brf       = brf.to(device)
+            #drf       = drf.to(device)
+            #ref       = ref.to(device)
+            #ref_label = ref_label.to(device)
+            #dweight = dweight.to(device)
+            #rweight = rweight.to(device)
+            #bweight = bweight.to(device)
             dist     = sparkKer(drf.detach(),ref.detach(),ref_label,-1,dweight.detach(),rweight.detach(),plot=plot,splitmass=splitmass,iWidth_init=[width])
             ref_dist = sparkKer(brf.detach(),ref.detach(),ref_label,-1,bweight.detach(),rweight.detach(),plot=plot,splitmass=splitmass,iWidth_init=[width])
         else:
