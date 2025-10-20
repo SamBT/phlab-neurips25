@@ -1,16 +1,18 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import einops
 
 class SupervisedSimCLRLoss(nn.Module):
     """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
     It also supports the unsupervised contrastive loss in SimCLR"""
-    def __init__(self, temperature=0.07, contrast_mode='all',
+    def __init__(self, temperature=0.07, contrast_mode='all',sim_metric='cos',
                  base_temperature=None):
         super(SupervisedSimCLRLoss, self).__init__()
         self.temperature = temperature
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature if base_temperature is not None else temperature
+        self.sim_metric = sim_metric
 
     def forward(self, features, labels=None, mask=None):
         """Compute loss for model. If both `labels` and `mask` are None,
@@ -60,9 +62,21 @@ class SupervisedSimCLRLoss(nn.Module):
             raise ValueError('Unknown mode: {}'.format(self.contrast_mode))
 
         # compute logits
-        anchor_dot_contrast = torch.div(
-            torch.matmul(anchor_feature, contrast_feature.T),
-            self.temperature)
+        if self.sim_metric == 'cos':
+            anchor_dot_contrast = torch.div(
+                torch.matmul(anchor_feature, contrast_feature.T),
+                self.temperature)
+        elif self.sim_metric == 'sphere_geodesic':
+            eps = 1e-6
+            cos_theta = torch.clamp(torch.matmul(anchor_feature, contrast_feature.T),min=-1.0+eps,max=1.0-eps)
+            if torch.any(torch.isnan(cos_theta)):
+                print("NaN detected in cosine computation. Check input features.")
+            sim = 1 - torch.div(torch.acos(cos_theta),torch.pi)
+            if torch.any(torch.isnan(sim)):
+                print("NaN detected in similarity computation. Check input features.")
+            anchor_dot_contrast = torch.div(sim, self.temperature)
+        else:
+            raise ValueError('Unknown similarity metric: {}'.format(self.sim_metric))
         # for numerical stability
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
@@ -132,3 +146,45 @@ class MMDLoss(nn.Module):
         XY = K[:X_size, X_size:].mean()
         YY = K[X_size:, X_size:].mean()
         return XX - 2 * XY + YY
+
+class MMCRLoss(nn.Module):
+    """
+    MMCR Loss function implementation.
+    Based on the original implementation in the MMCR codebase.
+    """
+    def __init__(self, n_views, lmbda=0.0):
+        super(MMCRLoss, self).__init__()
+        self.n_views = n_views # number of augmented views to expect per image
+        self.lmbda = lmbda
+    
+    def forward(self, z):
+        """
+        Args:
+            z: Tensor of shape (batch_size, n_views, feature_dim)
+               Contains projections for all views of all images
+        
+        Returns:
+            loss: MMCR loss value
+        """
+        # Normalize representations to unit sphere
+        z_local = F.normalize(z, dim=-1)
+        
+        batch_size = z_local.shape[0]
+        
+        # Compute centroids: average across views for each image
+        centroids = torch.mean(z_local, dim=1)  # Shape: (batch_size, feature_dim)
+
+        if self.lmbda != 0.0:
+            local_nuc = torch.linalg.svdvals(z_local).sum()
+        else:
+            local_nuc = torch.tensor(0.0)
+        
+        # compute the singular values of the centroid matrix
+        sigmas = torch.linalg.svdvals(centroids)
+        # sum them to get the nuclear norm
+        nuc_norm = torch.sum(sigmas)  # Nuclear norm of the centroids
+        
+        # MMCR loss (careful about the sign!)
+        loss = self.lmbda * local_nuc/batch_size - nuc_norm 
+        
+        return loss

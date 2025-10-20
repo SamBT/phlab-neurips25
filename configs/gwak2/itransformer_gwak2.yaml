@@ -1,0 +1,82 @@
+seed_everything: 82942
+
+trainer:
+  accelerator: auto
+  default_root_dir: runs/gwak2/itransformer/
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: val/loss
+        mode: min
+        save_last: true
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: val/loss
+        patience: 20
+        mode: min
+  logger:
+    class_path: lightning.pytorch.loggers.WandbLogger
+  log_every_n_steps: 1
+  max_epochs: 50
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+
+data:
+  class_path: data.datasets.OfflineLIGOData
+  init_args:
+    signal_classes:
+      - "SineGaussian"
+      - "BBH"
+      - "Gaussian"
+      - "Cusp"
+      - "Kink"
+      - "KinkKink"
+      - "WhiteNoiseBurst"
+      - "Background"
+      - "Glitch"
+    chunk_size: 10000
+    batch_size: 512
+    num_workers: 1
+
+optimizer:
+  class_path: torch.optim.AdamW
+  init_args:
+    lr: 5e-4
+
+model:
+  class_path: models.litmodels.SimCLRModel
+  init_args:
+    encoder:
+      class_path: models.transformers.TransformerEmbedder
+      init_args:
+        transformer:
+          class_path: models.transformers.InvertedEncoderTransformer
+          init_args:
+            num_features: 200
+            num_layers: 8
+            nhead: 4
+            latent_dim: 128
+            dim_factor_feedforward: 4
+            dropout: 0.1
+            bias: false
+            use_conv: true
+            time_last: true
+            embed_first: true
+        mlp:
+          class_path: models.networks.MLP
+          init_args:
+            input_dim: 128
+            hidden_dims: [512, 512, 512]
+            output_dim: 64  # dimension of contrastive space
+            activation: silu
+    projector:
+      class_path: models.networks.MLP
+      init_args:
+        input_dim: 64
+        hidden_dims: [32]
+        output_dim: 8
+        activation: relu
+    temperature: 0.05
+    sup_simclr: true
+    visualization_dim: 8
+    sim_metric: sphere_geodesic  # 'cos' or 'sphere_geodesic'

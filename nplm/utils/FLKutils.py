@@ -17,6 +17,7 @@ import matplotlib.font_manager as font_manager
 plt.rcParams["font.family"] = "serif"
 plt.style.use('classic')
 font = font_manager.FontProperties(family='serif', size=20)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def get_logflk_config(M,flk_sigma,lam,weight,iter=[1000000],seed=None,cpu=False):
@@ -26,7 +27,7 @@ def get_logflk_config(M,flk_sigma,lam,weight,iter=[1000000],seed=None,cpu=False)
             'M' : M, #number of Nystrom centers,
             'penalty_list' : lam, # list of regularization parameters,
             'iter_list' : iter, #list of number of CG iterations,
-            'options' : FalkonOptions(cg_tolerance=np.sqrt(float(1e-7)), keops_active='no', use_cpu=cpu, debug = False),
+            'options' : FalkonOptions(cg_tolerance=np.sqrt(float(1e-7)), keops_active='no', use_cpu=False, debug = False),
             'seed' : seed, # (int or None), the model seed (used for Nystrom center selection) is manually set,
             'loss' : WeightedCrossEntropyLoss(kernel=GaussianKernel(sigma=flk_sigma), neg_weight=weight),
             }

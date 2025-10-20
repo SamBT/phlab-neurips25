@@ -10,6 +10,44 @@ import torch
 import torch.nn as nn
 from functools import partial
 
+activations = {
+    "relu": nn.ReLU(),
+    "sigmoid": nn.Sigmoid(),
+    "tanh": nn.Tanh(),
+    "elu": nn.ELU(),
+    "leaky_relu": nn.LeakyReLU(),
+    "gelu": nn.GELU(),
+    "tanh": nn.Tanh(),
+    "silu": nn.SiLU()
+}
+
+class MLP(nn.Module):
+    def __init__(self, input_dim, hidden_dims, output_dim, dropout=0.0, activation='relu', output_activation=None, input_activation=None):
+        super().__init__()
+        layers = []
+        if input_activation is not None:
+            layers.append(input_activation())
+        current_dim = input_dim
+        
+        for hidden_dim in hidden_dims:
+            layers.append(nn.Linear(current_dim, hidden_dim))
+            layers.append(activations[activation])
+            if dropout > 0:
+                layers.append(nn.Dropout(dropout))
+            current_dim = hidden_dim
+        
+        layers.append(nn.Linear(current_dim, output_dim))
+        if output_activation is not None:
+            layers.append(activations[output_activation])
+        self.network = nn.Sequential(*layers)
+            
+    def forward(self, x):
+        return self.network(x)
+    
+    def forward_ll(self, x):
+        out = self.network(x)
+        return out
+
 @torch.jit.script
 def delta_phi(a, b):
     return (a - b + math.pi) % (2 * math.pi) - math.pi
@@ -735,3 +773,45 @@ class ParticleTransformerTaggerWithExtraPairFeatures(nn.Module):
             x = torch.cat([pf_x, sv_x], dim=0)
 
             return self.part(x, v, mask, uu)
+
+
+class BasicParticleTransformer(nn.Module):
+
+    def __init__(self,input_dim,model_dim,decoder_hidden_dims,output_dim,nlayers=4,nhead=8,
+                 fan_factor=4,att_drop=0.1,att_activation='gelu',decoder_activation='gelu',decoder_drop=0.1, **kwargs):
+        super().__init__(**kwargs)
+        self.embedder = nn.Linear(input_dim, model_dim)
+        self.transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=model_dim,
+                nhead=nhead,
+                dim_feedforward=model_dim * fan_factor,
+                dropout=att_drop,
+                activation=att_activation,
+                batch_first=True,
+            ),
+            num_layers=nlayers
+        )
+        self.decoder = MLP(input_dim=model_dim,hidden_dims=decoder_hidden_dims,output_dim=output_dim,
+                           activation=decoder_activation,dropout=decoder_drop)
+    
+
+    def forward(self, x, mask=None):
+        # x: (B, features, n_particles)
+        # mask: (B, 1, n_particles) -- real particle = 1, padded = 0
+
+        x = x.transpose(1, 2)  # (B, n_particles, features)
+        x = self.embedder(x)
+        if mask is not None:
+            # mask from JetClass loader has shape (B, n_particles), we need to expand it to (B, n_particles, n_particles)
+            # entries of 1 mean real particle, so convert to boolean where True means *do* mask
+            transformer_mask = ~mask[:,0,:].bool()
+        else:
+            transformer_mask = mask
+        x = self.transformer(x, src_key_padding_mask=transformer_mask)
+        # pool by mean; mask out non-particle entries
+        x = x * mask.transpose(1,2) # reshape mask to (B, n_particles, 1)
+        x = x.mean(dim=1)
+        # decoder to output dim
+        x = self.decoder(x)
+        return x  # (B, output_dim)

@@ -44,6 +44,8 @@ if __name__ == '__main__':
     parser.add_argument('--nref',type=int, help="number of reference events", required=False, default=10000)
     parser.add_argument('--nbkg',type=int, help="number of background events", required=False, default=2000)
     parser.add_argument('-q','--queue', type=str, help="queue to submit jobs to", required=False, default='iaifi_gpu_priority')
+    parser.add_argument('--permutation', action='store_true', help="whether to do a permutation test, only for nsig = 0")
+    parser.add_argument('--nkernels', type=int, help="number of kernels", required=False, default=-1)
                                                                                     
     args     = parser.parse_args()
     ntoys    = args.toys
@@ -60,7 +62,10 @@ if __name__ == '__main__':
     # set the data file path
     config_json['data_filepath'] = args.data_filepath
     # fix the number of kernels
-    config_json['M'] = int(np.sqrt(args.nref + args.nbkg))
+    if args.nkernels > 0:
+        config_json['M'] = args.nkernels
+    else:
+        config_json['M'] = int(np.sqrt(args.nref + args.nbkg))
 
     # if we only want to run reference vs reference change file paths
     if args.reference_only:

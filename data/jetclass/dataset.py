@@ -1,3 +1,4 @@
+import logging
 import os
 import copy
 import json
@@ -185,6 +186,23 @@ class _SimpleIter(object):
         # prefetch the first entry asynchronously
         self._try_get_next(init=True)
 
+    def balance_indices(self):
+        #print("Balancing indices!")
+        labels = self.table[self._data_config.label_names[0]]
+        uniq, counts = np.unique(labels, return_counts=True)
+        #print("uniq:", uniq)
+        #print("counts:", counts)
+        min_label_count = np.min(counts)
+        total_idx = np.arange(len(labels))
+        label_indices = [total_idx[labels==l][:min_label_count][np.random.permutation(min_label_count)] for l in uniq]
+        tmp_indices = []
+        #print("indices before", self.indices)
+        for label_set in zip(*label_indices):
+            tmp_indices.extend(list(label_set))
+        self.indices = np.array(tmp_indices)
+        #print("indices after", self.indices)
+        #print("label order:", [labels[self.indices[i]] for i in range(len(self.indices))])
+
     def __next__(self):
         # print(self.ipos, self.cursor)
         if len(self.filelist) == 0:
@@ -211,6 +229,9 @@ class _SimpleIter(object):
                     self.table, self.indices = self.prefetch.result()
                 else:
                     self.table, self.indices = self.prefetch
+                # run extra processing for balanced batching if needed
+                if self._balanced_batching:
+                    self.balance_indices()
                 # try to load the next ones asynchronously
                 self._try_get_next()
                 # check if any entries are fetched (i.e., passing selection) -- if not, do another fetch
@@ -220,7 +241,14 @@ class _SimpleIter(object):
             self.cursor = 0
             i = self.indices[self.cursor]
         self.cursor += 1
-        return self.get_data(i)
+            
+        if self._augmenter is None:
+            #print("returning index", i)
+            return self.get_data(i)
+        else:
+            #print("augmenting!")
+            data = self.get_data(i)
+            return self._augmenter.augment(data)
 
     def _try_get_next(self, init=False):
         end_of_list = self.ipos >= len(self.filelist) if self._fetch_by_files else self.ipos >= self.load_range[1]
@@ -288,7 +316,9 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
     def __init__(self, file_dict, data_config_file,
                  for_training=True, load_range_and_fraction=None, extra_selection=None,
                  fetch_by_files=False, fetch_step=0.01, file_fraction=1, remake_weights=False, up_sample=True,
-                 weight_scale=1, max_resample=10, async_load=True, infinity_mode=False, in_memory=False, name=''):
+                 weight_scale=1, max_resample=10, async_load=True, infinity_mode=False, in_memory=False, name='',
+                 augmenter=None,force_observers=False,
+                 balanced_batching=False):
         self._iters = {} if infinity_mode or in_memory else None
         _init_args = set(self.__dict__.keys())
         self._init_file_dict = file_dict
@@ -300,7 +330,10 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
         self._infinity_mode = infinity_mode
         self._in_memory = in_memory
         self._name = name
-
+        self._augmenter = augmenter
+        self._force_observers = force_observers
+        self._balanced_batching = balanced_batching
+            
         # ==== sampling parameters ====
         self._sampler_options = {
             'up_sample': up_sample,
@@ -346,7 +379,7 @@ class SimpleIterDataset(torch.utils.data.IterableDataset):
             if os.path.exists(data_config_autogen_file) and data_config_file != data_config_autogen_file:
                 data_config_file = data_config_autogen_file
                 print(f'Found file {data_config_file} w/ auto-generated preprocessing information, will use that instead!')
-            self._data_config = DataConfig.load(data_config_file, load_observers=False, extra_selection=extra_selection)
+            self._data_config = DataConfig.load(data_config_file, load_observers=self._force_observers, extra_selection=extra_selection)
         else:
             self._data_config = DataConfig.load(
                 data_config_file, load_reweight_info=False, extra_test_selection=extra_selection)

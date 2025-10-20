@@ -4,9 +4,10 @@ import numpy as np
 from torchvision.models import resnet50, resnet18, efficientnet_b0
 from torchvision.models import ResNet50_Weights, ResNet18_Weights, ResNet34_Weights, ResNet101_Weights, ResNet152_Weights
 from .resnet_wider import resnet50x1, resnet50x2, resnet50x4
-from .parT import ParticleTransformer
+from .parT import ParticleTransformer, BasicParticleTransformer
 import yaml
 from .bit_pytorch_models import KNOWN_MODELS
+from .transformer import Transformer
 
 activations = {
     "relu": nn.ReLU(),
@@ -15,7 +16,8 @@ activations = {
     "elu": nn.ELU(),
     "leaky_relu": nn.LeakyReLU(),
     "gelu": nn.GELU(),
-    "tanh": nn.Tanh()
+    "tanh": nn.Tanh(),
+    "silu": nn.SiLU()
 }
 
 class MLP(nn.Module):
@@ -37,6 +39,7 @@ class MLP(nn.Module):
         if output_activation is not None:
             layers.append(activations[output_activation])
         self.network = nn.Sequential(*layers)
+        print(f"Initialized MLP with input_dim={input_dim}, hidden_dims={hidden_dims}, output_dim={output_dim}, dropout={dropout}, activation={activation}, output_activation={output_activation}")
             
     def forward(self, x):
         return self.network(x)
@@ -134,11 +137,31 @@ class ParticleTransformerModel(nn.Module):
         super().__init__()
         self.model = ParticleTransformer(**kwargs)
 
-    def forward(self,x):
+    def forward(self,x,use_vectors=True):
         features = x['pf_features'].float()
-        vectors = x['pf_vectors'].float()
+        vectors = x['pf_vectors'].float() if use_vectors else None
         mask = x['pf_mask'].float()
         return self.model(features,v=vectors,mask=mask)
+    
+class BasicParticleTransformerModel(nn.Module):
+    def __init__(self,**kwargs):
+        super().__init__()
+        self.model = BasicParticleTransformer(**kwargs)
+
+    def forward(self,x):
+        features = x['pf_features'].float()
+        mask = x['pf_mask'].float()
+        return self.model(features,mask=mask)
+
+class FlashParticleTransformerModel(nn.Module):
+    def __init__(self,**kwargs):
+        super().__init__()
+        self.model = Transformer(**kwargs)
+
+    def forward(self,x):
+        features = x['pf_features'].float()
+        mask = x['pf_mask'].float()
+        return self.model(features,mask=mask)
     
 class BiT(nn.Module):
     def __init__(self,name,path):

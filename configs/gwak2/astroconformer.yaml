@@ -1,0 +1,72 @@
+seed_everything: 82942
+
+trainer:
+  accelerator: auto
+  default_root_dir: runs/gwak2/astroconformer/
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: val/loss
+        mode: min
+        save_last: true
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: val/loss
+        patience: 20
+        mode: min
+  logger:
+    class_path: lightning.pytorch.loggers.WandbLogger
+  log_every_n_steps: 1
+  max_epochs: 50
+  limit_train_batches: 50
+  limit_val_batches: 20
+
+data:
+  class_path: data.datasets.OfflineLIGOData
+  init_args:
+    signal_classes:
+      - "SineGaussian"
+      - "BBH"
+      - "Gaussian"
+      - "Cusp"
+      - "Kink"
+      - "KinkKink"
+      - "WhiteNoiseBurst"
+      - "Background"
+      - "Glitch"
+    chunk_size: 50_000
+    batch_size: 512
+    num_workers: 1
+
+optimizer:
+  class_path: torch.optim.AdamW
+  init_args:
+    lr: 1e-3
+
+model:
+  class_path: models.litmodels.SimCLRModel
+  init_args:
+    encoder:
+      class_path: models.Astroconformer.Astroconformer        
+      init_args:
+        in_channels: 2
+        encoder_dim: 128
+        extractor_kernel_size: 64
+        conv_kernel_size: 3
+        output_dim: 16
+        encoder: ["mhsa_pro","conv","conv"]
+        num_layers: 5
+        num_heads: 8
+        dropout_p: 0.1
+        timeshift: false
+    projector:
+      class_path: models.networks.MLP
+      init_args:
+        input_dim: 16
+        hidden_dims: [8]
+        output_dim: 4
+        activation: relu
+    temperature: 0.05
+    sup_simclr: true
+    visualization_dim: 8
+    sim_metric: cos  # 'cos' or 'sphere_geodesic'

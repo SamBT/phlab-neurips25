@@ -17,6 +17,7 @@ import sys
 sys.path.insert(1, '../utils/')
 from FLKutils import *
 from GENutils import *
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-j', '--jsonfile', type=str, help="json file", required=True)
@@ -98,7 +99,8 @@ for flk_sigma in flk_sigmas:
     data_idx_list = []
     anomaly_idx_list = []
     seeds_flk = []
-    for i in range(Ntoys):
+    print(f"TOYS FOR FLK SIGMA {flk_sigma}")
+    for i in tqdm(range(Ntoys)):
         # set the seed
         seed = seed_toys[i]
         rng = np.random.default_rng(seed=seed)

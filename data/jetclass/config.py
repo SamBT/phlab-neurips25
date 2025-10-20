@@ -183,7 +183,7 @@ class DataConfig(object):
         for names in self.input_dicts.values():
             self.register(names)
         # observers
-        self.register(self.observer_names, to='test')
+        self.register(self.observer_names, to='both')
         # monitor variables
         self.register(self.monitor_variables)
         # resolve dependencies

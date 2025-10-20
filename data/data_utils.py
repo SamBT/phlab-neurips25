@@ -522,5 +522,54 @@ def run_toy( nsig, nbkg, nref, data, labels, model, model_labels,sig_idx,ntoys=1
                        label1='REF', label2='DATA', save_name='', print_Zscore=True)
     return z_as,z_emp
 
-#from GENutils import *
-#from ANALYSISutils import *
+class BalancedBatchSampler:
+    """
+    A sampler that creates balanced batches with specified number of samples per class.
+    """
+    def __init__(self, labels, samples_per_class, num_classes=None, shuffle=True):
+        self.labels = torch.tensor(labels) if not isinstance(labels, torch.Tensor) else labels
+        self.samples_per_class = samples_per_class
+        self.shuffle = shuffle
+        
+        # Get unique classes
+        self.unique_classes = torch.unique(self.labels)
+        if num_classes is None:
+            self.num_classes = len(self.unique_classes)
+        else:
+            self.num_classes = num_classes
+            
+        # Create class-to-indices mapping
+        self.class_indices = {}
+        for class_label in self.unique_classes:
+            self.class_indices[class_label.item()] = torch.where(self.labels == class_label)[0]
+            
+        self.batch_size = self.samples_per_class * self.num_classes
+        
+    def __iter__(self):
+        # Create balanced batches
+        min_class_size = min(len(indices) for indices in self.class_indices.values())
+        num_batches = min_class_size // self.samples_per_class
+        
+        for _ in range(num_batches):
+            batch_indices = []
+            
+            for class_label in self.unique_classes:
+                class_indices = self.class_indices[class_label.item()]
+                
+                if self.shuffle:
+                    # Randomly sample from this class
+                    selected = torch.randperm(len(class_indices))[:self.samples_per_class]
+                    batch_indices.extend(class_indices[selected].tolist())
+                else:
+                    # Take first samples_per_class samples
+                    batch_indices.extend(class_indices[:self.samples_per_class].tolist())
+                    
+            if self.shuffle:
+                # Shuffle the batch
+                batch_indices = torch.tensor(batch_indices)[torch.randperm(len(batch_indices))].tolist()
+                
+            yield batch_indices
+            
+    def __len__(self):
+        min_class_size = min(len(indices) for indices in self.class_indices.values())
+        return min_class_size // self.samples_per_class

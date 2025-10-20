@@ -1,0 +1,149 @@
+common:
+  transformer_dim: 512
+  num_views: 4
+  embed_dim: 32
+  lmbda: 0.0
+  num_epoch: 100
+  train_batches_per_epoch: 500
+  val_batches_per_epoch: 50
+  limit_test_batches: 1.0
+  batch_size: 64
+  lr: 1e-4
+  lr_min: 1e-5
+  patience: 20
+  limit_test_files: 1
+  classifier_epochs: 200
+  classifier_batch_size: 512
+  classifier_frac_train: 0.7
+  classifier_frac_val: 0.15
+  classifier_lr: 1e-3
+  classifier_patience: 20
+
+train: true
+test: true
+seed: 781072
+
+trainer:
+  _target_: lightning.pytorch.Trainer
+  accelerator: auto
+  default_root_dir: "runs_MMCR/masked_aug${common.num_views}_dim${common.embed_dim}_lmbda${common.lmbda}_flashParT/"
+  log_every_n_steps: 1
+  max_epochs: ${common.num_epoch}
+  limit_train_batches: ${common.train_batches_per_epoch}
+  limit_val_batches: ${common.val_batches_per_epoch}
+  limit_test_batches: ${common.limit_test_batches}
+
+callbacks:
+  model_checkpoint:
+    _target_: lightning.pytorch.callbacks.ModelCheckpoint
+    monitor: val/loss
+    mode: min
+    save_last: true
+  early_stopping:
+    _target_: lightning.pytorch.callbacks.EarlyStopping
+    monitor: val/loss
+    patience: ${common.patience}
+    mode: min
+
+logger:
+  wandb:
+    _target_: lightning.pytorch.loggers.WandbLogger
+    save_dir: ${trainer.default_root_dir}
+
+model:
+  _target_: models.litmodels.JetCLRMMCRModel
+  num_views: ${common.num_views}
+  lmbda: ${common.lmbda}
+  visualization_dim: 12
+  encoder:
+    _target_: models.networks.FlashParticleTransformerModel
+    input_dim: 3
+    model_dim: ${common.transformer_dim}
+    decoder_hidden_dims:
+      - ${common.transformer_dim}
+      - ${eval:'${common.transformer_dim} // 2 if ${common.transformer_dim} > 2*${common.embed_dim} else int(1.5*${common.embed_dim})'}
+    output_dim: ${common.embed_dim}
+    nlayers: 4
+    nhead: 4
+  projector:
+    _target_: models.networks.MLP
+    input_dim: ${common.embed_dim}
+    hidden_dims:
+      - ${common.embed_dim}
+    output_dim: ${eval:'${common.embed_dim} // 2'}
+  optimizer:
+    _target_: torch.optim.AdamW
+    _partial_: true
+  opt_params:
+    lr: ${common.lr}
+  scheduler:
+    _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+    _partial_: true
+  scheduler_params:
+    T_max: ${common.num_epoch}
+    eta_min: ${common.lr_min}
+
+data:
+  _target_: data.datasets.JetClassDataset
+  classes: [qcd,ttbar,wqq,zqq,hbb]
+  input_config: configs/jetclass_data_configs/JetClass_minimal_withpT.yaml
+  augmenter:
+    _target_: data.jetclass.augmentations_unbatched.JetCLR_Augmenter
+    num_augs: ${common.num_views}
+    log_pt: true
+    rotate: false
+    split: false
+    distort: false
+    mask_particles: true
+  force_observers: true
+  batch_size: ${common.batch_size}
+  num_workers: 2
+  limit_test_files: ${common.limit_test_files}
+
+linear_classifier:
+  _target_: torch.nn.Linear
+  in_features: ${common.embed_dim}
+  out_features: ${eval:'len(${data.classes})'}
+
+mlp_classifier:
+  _target_: models.networks.MLP
+  input_dim: ${common.embed_dim}
+  activation: silu
+  dropout: 0.1
+  hidden_dims:
+    - ${eval:'${common.embed_dim} * 4'}
+    - ${eval:'${common.embed_dim} * 4'}
+    - ${eval:'${common.embed_dim} * 2'}
+  output_dim: ${eval:'len(${data.classes})'}
+
+classifier_module:
+  _target_: models.litmodels.ClassifierModel
+  num_classes: ${eval:'len(${data.classes})'}
+  optimizer:
+    _target_: torch.optim.AdamW
+    _partial_: true
+  opt_params:
+    lr: ${common.classifier_lr}
+
+classifier_trainer:
+  _target_: lightning.pytorch.Trainer
+  accelerator: auto
+  log_every_n_steps: 1
+  max_epochs: ${common.classifier_epochs}
+
+classifier_data:
+  _target_: data.datasets.ClassifierDatasetHdf5
+  seed: ${seed}
+  frac_train: ${common.classifier_frac_train}
+  frac_val: ${common.classifier_frac_val}
+  num_workers: 2
+
+classifier_callbacks:
+  model_checkpoint:
+    _target_: lightning.pytorch.callbacks.ModelCheckpoint
+    mode: min
+    save_last: true
+  early_stopping:
+    _target_: lightning.pytorch.callbacks.EarlyStopping
+    patience: ${common.classifier_patience}
+    mode: min

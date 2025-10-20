@@ -8,7 +8,6 @@ folder = args.folder
 dict_all = {}
 header = ''
 for file_tmp in glob.glob('%s/*.h5'%(folder)):
-    print(file_tmp)
     if '_all' in file_tmp: continue
     f = h5py.File(file_tmp, 'r')
     print(file_tmp)
@@ -25,6 +24,6 @@ for file_tmp in glob.glob('%s/*.h5'%(folder)):
 
 f = h5py.File("%s/%s_all.h5"%(folder,header), 'w')
 for k in list(dict_all.keys()):
-    f.create_dataset(k, data=dict_all[k], compression='gzip')
+    f.create_dataset(k, data=dict_all[k])
 f.close()
 print('saved')
